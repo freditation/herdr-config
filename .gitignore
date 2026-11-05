@@ -1,0 +1,7 @@
+# Generated or personal: never published.
+.denylist
+gpui-kit.d.ts
+**/gpui-kit.d.ts
+mods/agents-mine/routines.json
+mods/agents-mine/routines.json.tmp
+.DS_Store

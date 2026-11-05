@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Refreshes the calendar's routines.json every 20 minutes. Replace __HOME__ with your home folder. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev.herdr-config.routines</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string><string>-I</string>
+    <string>__HOME__/.config/herdr-app/mods/agents-mine/refresh-routines.py</string>
+  </array>
+  <key>StartInterval</key><integer>1200</integer>
+  <key>RunAtLoad</key><true/>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>__HOME__/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string></dict>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/herdr-routines.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/herdr-routines.log</string>
+</dict>
+</plist>

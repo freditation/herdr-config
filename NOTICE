@@ -1,0 +1,10 @@
+herdr-config
+
+mods/agents-mine, mods/menu-mine and mods/tabs-mine are modified copies of Herdr's
+built-in `agents`, `menu` and `tabs` mods (version 0.1.12), from
+https://github.com/herdrdev/herdr-app, licensed under the Apache License 2.0
+(see LICENSE). They have been changed: agents-mine regroups agents into
+Needs you / Running / Idle / Archived, bolds unread agents, adds hover cards
+and a calendar of Claude cloud routines; menu-mine and tabs-mine carry smaller
+changes to the menu and tab strip. Everything else here is original and is
+offered under the same licence.
