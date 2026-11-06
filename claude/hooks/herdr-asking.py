@@ -96,6 +96,10 @@ def main():
     kind = event.get("hook_event_name")
     asking = kind == "Stop" and asks(last_reply(event))
     labels = [f"{LABEL}={'1' if asking else ''}"]
+    if event.get("session_id"):
+        labels.append(f"herdr.session={event['session_id']}")
+    if event.get("cwd"):
+        labels.append(f"herdr.cwd={event['cwd']}")
     if kind in ("UserPromptSubmit", "SessionStart"):
         labels.append(f"herdr.task={sentence(first_prompt(event))}")
     subprocess.run([HC, "label", terminal, *labels], capture_output=True, timeout=10)

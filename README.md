@@ -8,7 +8,7 @@ My setup for [Herdr](https://github.com/herdrdev/herdr-app) with Claude Code: an
   - **Needs you:** the agent is blocked on a prompt, or ended its turn on a question. A question still counts while its background subagents run.
   - **Running.**
   - **Idle:** finished.
-  - **Archived:** recent closed sessions. Click one to resume it.
+  - **Archived:** recent closed sessions, the one you just closed on top. Click one to resume it.
 - **Bold means unread**, in Needs you and Idle, until you've looked at the agent and moved on.
 - **A hover card** on each agent with its task in a sentence: the first sentence of the session's first prompt.
 - **Hover the status dot for an ✕.** On a running agent it stops it; on any other it archives it.

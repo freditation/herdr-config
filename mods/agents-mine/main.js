@@ -265,7 +265,15 @@ export default class Agents extends View {
     cx.spawn(async (cx) => {
       try {
         const r = await exec("python3", ["-I", `${appHome()}/mods/agents-mine/closed.py`, "6"]);
-        if (r.code === 0) this.closed = JSON.parse(r.stdout);
+        if (r.code === 0) {
+          // One just archived here stays on top until closed.py sees it gone too
+          // (its process can outlive the click by a moment).
+          const got = JSON.parse(r.stdout);
+          const ids = new Set(got.map((s) => s.id));
+          const keep = [...(this.archiving ?? new Map()).values()].filter((s) => !ids.has(s.id) && Date.now() - s.at < 20000);
+          this.archiving = new Map(keep.map((s) => [s.id, s]));
+          this.closed = [...keep, ...got].slice(0, 6);
+        }
       } catch {}
       cx.notify();
     });
@@ -554,6 +562,14 @@ export default class Agents extends View {
           const tab = tabs.find((tb) => tb.id === a.tab);
           if (tab && tab.panes <= 1) run("tab.close", { id: a.tab, confirmed: true });
           else run("pane.close", { pane: a.pane });
+          // Straight to the top of Archived, without waiting for closed.py to notice.
+          const lab = all.find((x) => x.address === a.address)?.labels ?? {};
+          if (lab["herdr.session"] && lab["herdr.cwd"]) {
+            const s = { id: lab["herdr.session"], title: name, cwd: lab["herdr.cwd"], at: Date.now() };
+            this.archiving = this.archiving ?? new Map();
+            this.archiving.set(s.id, s);
+            this.closed = [s, ...this.closed.filter((c) => c.id !== s.id)].slice(0, 6);
+          }
           // The row goes away from under the pointer, and no hover-out comes.
           this.hovered = null;
           cx.notify();

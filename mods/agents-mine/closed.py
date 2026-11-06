@@ -3,8 +3,13 @@
 
 Each: {id, title, cwd, at (ms)}. Live sessions come from ~/.claude/sessions/<pid>.json
 whose pid is still alive. Only the tail of each transcript is read.
+
+`at` is when it was archived: the last time this script saw it running (kept in
+~/.cache/herdr-agents-mine/seen-live.json: not in the mod folder, where writing it
+would hot-reload the mod and loop), or its last message if it was never seen running. So an
+agent idle for days still goes to the top when you close it.
 """
-import glob, json, os, re, sys
+import glob, json, os, re, sys, time
 from datetime import datetime
 
 LIMIT = int(sys.argv[1]) if len(sys.argv) > 1 else 6
@@ -31,9 +36,32 @@ for f in glob.glob(f"{HOME}/sessions/*.json"):
     except Exception:
         pass
 
-files = sorted(glob.glob(f"{HOME}/projects/*/*.jsonl"), key=os.path.getmtime, reverse=True)
+NOW = int(time.time() * 1000)
+CACHE = os.path.expanduser("~/.cache/herdr-agents-mine")
+os.makedirs(CACHE, exist_ok=True)
+SEEN = os.path.join(CACHE, "seen-live.json")
+try:
+    seen = json.load(open(SEEN))
+except Exception:
+    seen = {}
+for sid in live:
+    seen[sid] = NOW
+seen = {k: v for k, v in seen.items() if NOW - v < 14 * 86400000}
+try:
+    tmp = SEEN + ".tmp"
+    json.dump(seen, open(tmp, "w"))
+    os.replace(tmp, SEEN)
+except Exception:
+    pass
+
+files = sorted(glob.glob(f"{HOME}/projects/*/*.jsonl"), key=os.path.getmtime, reverse=True)[: LIMIT * 4]
+# Sessions seen running recently were just archived, however old their last message.
+have = {os.path.basename(f)[:-6] for f in files}
+for sid in seen:
+    if sid not in live and sid not in have:
+        files += glob.glob(f"{HOME}/projects/*/{glob.escape(sid)}.jsonl")[:1]
 out = []
-for f in files[: LIMIT * 4]:
+for f in files:
     sid = os.path.basename(f)[:-6]
     if sid in live:
         continue
@@ -68,6 +96,7 @@ for f in files[: LIMIT * 4]:
         ms = int(datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp() * 1000)
     except Exception:
         ms = int(os.path.getmtime(f) * 1000)
+    ms = max(ms, seen.get(sid, 0))
     out.append({"id": sid, "title": name, "cwd": cwd, "at": ms})
 
 out.sort(key=lambda s: s["at"], reverse=True)
