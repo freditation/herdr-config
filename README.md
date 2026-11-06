@@ -15,7 +15,8 @@ My setup for [Herdr](https://github.com/herdrdev/herdr-app) with Claude Code: an
 - **A calendar** (the calendar icon) of your Claude cloud routines this week.
 - **My PRs** (`mods/my-prs`): your open and recently merged GitHub pull requests at the bottom of the sidebar. Needs `gh`.
 - **Menu and tabs tweaks** (`mods/menu-mine`, `mods/tabs-mine`), my layout (`layouts/mine.json`) and keys (`keys.json`).
-- **Claude Code side** (`claude/`): the `herdr-asking.py` hook and my `statusline.sh`, which shows folder, model, effort and context.
+- **Spaces named after their session**: the `herdr-space-name.py` hook renames a space to its Claude session's title, unless you've named the space yourself.
+- **Claude Code side** (`claude/`): the `herdr-asking.py` and `herdr-space-name.py` hooks and my `statusline.sh`, which shows folder, model, effort and context.
 
 ## Install
 
@@ -38,11 +39,11 @@ The `+` button starts Claude in your home folder. To start it somewhere else, se
 
 ```sh
 mkdir -p ~/.claude/hooks
-cp claude/hooks/herdr-asking.py ~/.claude/hooks/ && chmod +x ~/.claude/hooks/herdr-asking.py
+cp claude/hooks/herdr-*.py ~/.claude/hooks/ && chmod +x ~/.claude/hooks/herdr-*.py
 cp claude/statusline.sh ~/.claude/ && chmod +x ~/.claude/statusline.sh
 ```
 
-Merge `claude/settings.example.json` into `~/.claude/settings.json` by hand, keeping any hooks you already have. The hook only does anything inside Herdr. It sets two labels on the terminal: `herdr.asking` when a turn ends on a question, and `herdr.task` with the session's task. The status line needs `jq`.
+Merge `claude/settings.example.json` into `~/.claude/settings.json` by hand, keeping any hooks you already have. The hooks only do anything inside Herdr. `herdr-asking.py` sets two labels on the terminal: `herdr.asking` when a turn ends on a question, and `herdr.task` with the session's task. `herdr-space-name.py` runs when a turn ends and names the space after the session's terminal title, but only while the space still has Herdr's automatic name (or one it set itself), and only from the space's first terminal. The status line needs `jq`.
 
 ### Calendar of Claude cloud routines (optional)
 

@@ -23,6 +23,7 @@ layout=$(herdr-app status | python3 -c 'import json,sys; print(json.load(sys.std
 copy "$H/layouts/$layout.json" layouts/mine.json
 copy "$H/keys.json" keys.json
 copy "$C/hooks/herdr-asking.py" claude/hooks/herdr-asking.py
+copy "$C/hooks/herdr-space-name.py" claude/hooks/herdr-space-name.py
 copy "$C/statusline.sh" claude/statusline.sh
 
 # Neutral defaults: the + button opens Claude in your home folder; a generic launchd label.
