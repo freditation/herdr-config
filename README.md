@@ -5,8 +5,8 @@ My setup for [Herdr](https://github.com/herdrdev/herdr-app) with Claude Code: an
 ## What you get
 
 - **Agents sidebar** (`mods/agents-mine`) with four sections:
-  - **Needs you:** the agent is blocked on a prompt, or ended its turn on a question. A question still counts while its background subagents run.
   - **Running.**
+  - **Needs you:** the agent is blocked on a prompt, or ended its turn on a question. A question still counts while its background subagents run.
   - **Idle:** finished.
   - **Archived:** recent closed sessions, the one you just closed on top. Click one to resume it.
 - **Bold means unread**, in Needs you and Idle, until you've looked at the agent and moved on.

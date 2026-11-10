@@ -1,5 +1,5 @@
 // Agents in grouped or priority views; parents take their most urgent sub-agent's place.
-// Sections: Needs you, Running, Idle, Archived. Bold = unread (Needs you and Idle) until looked at and left.
+// Sections: Running, Needs you, Idle, Archived. Bold = unread (Needs you and Idle) until looked at and left.
 // The calendar icon opens a week of Claude cloud routines (routines.json).
 
 import { View, div, image, svg } from "gpui-kit";
@@ -65,6 +65,9 @@ const sortOf = () => SORTS.find((s) => s.id === shared("agents.sort")) ?? SORTS[
 const SECTION = { 4: "Needs you", 2: "Running", 1: "Idle" };
 const SECTION_STATUS = { 4: "blocked", 2: "working" };
 const sectionOf = (rank) => (rank > 3 ? 4 : rank > 1 && rank < 3 ? 2 : 1);
+// Display order, top to bottom: Running, Needs you, Idle (Archived follows separately).
+const SECTION_ORDER = [2, 4, 1];
+const sectionPos = (rank) => SECTION_ORDER.indexOf(sectionOf(rank));
 
 // Cron, five fields, read in UTC as Claude's cloud routines use it.
 function cronField(spec, v, lo, hi) {
@@ -578,7 +581,7 @@ export default class Agents extends View {
     const byPriority = sort.id === "priority";
     const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...this.tree(all, a.address).map((s) => RANK[kidStatus(s.t, this.listed)] ?? 0))]));
     const rankOf = (a) => urgency.get(a.address);
-    if (byPriority) list = [...list].sort((x, y) => sectionOf(rankOf(y)) - sectionOf(rankOf(x)) || this.since(y) - this.since(x) || y.seq - x.seq);
+    if (byPriority) list = [...list].sort((x, y) => sectionPos(rankOf(x)) - sectionPos(rankOf(y)) || this.since(y) - this.since(x) || y.seq - x.seq);
     this.noteNeeds(list, rankOf);
     const pinned = list.filter((a) => a.pinned);
     const rest = list.filter((a) => !a.pinned);
@@ -742,7 +745,7 @@ export default class Agents extends View {
     const groups = pinned.length ? [{ id: "pinned", label: "Pinned", status: null, members: pinned }] : [];
     if (byPriority) {
       // Every section, always, in a fixed order: one filling up doesn't push the others around.
-      const secs = [4, 2, 1].map((r) => ({ id: `sec-${r}`, label: SECTION[r], status: SECTION_STATUS[r], members: [] }));
+      const secs = SECTION_ORDER.map((r) => ({ id: `sec-${r}`, label: SECTION[r], status: SECTION_STATUS[r], members: [] }));
       for (const a of rest) secs.find((g) => g.id === `sec-${sectionOf(rankOf(a))}`).members.push(a);
       for (const g of secs) if (!g.members.length) g.status = null; // empty: dim header
       groups.push(...secs);
