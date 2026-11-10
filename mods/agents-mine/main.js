@@ -122,6 +122,12 @@ export default class Agents extends View {
   init(_props, cx) {
     if (props()?.sortMenu) return;
     if (props()?.hover) return;
+    if (props()?.agentMenu) {
+      this.at = -1;
+      this.handle = cx.focus_handle();
+      this.handle.focus();
+      return;
+    }
     if (props()?.calendar) {
       this.week = 0;
       this.loadRoutines(cx);
@@ -478,6 +484,88 @@ export default class Agents extends View {
     return sawDone ? RANK.done : RANK[a.status] ?? 0;
   }
 
+  // Closes an agent (stopping it if it runs) and puts it at the top of Archived.
+  archive(a, name) {
+    // The agent alone in its tab: close the tab, confirmed, so the last one
+    // takes its space with it without asking. Agents are easy to start again.
+    const tab = spaces().flatMap((s) => s.tabs).find((tb) => tb.id === a.tab);
+    if (tab && tab.panes <= 1) run("tab.close", { id: a.tab, confirmed: true });
+    else run("pane.close", { pane: a.pane });
+    // Straight to the top of Archived, without waiting for closed.py to notice.
+    const lab = terminals().find((x) => x.address === a.address)?.labels ?? {};
+    if (lab["herdr.session"] && lab["herdr.cwd"]) {
+      const s = { id: lab["herdr.session"], title: name, cwd: lab["herdr.cwd"], at: Date.now() };
+      this.archiving = this.archiving ?? new Map();
+      this.archiving.set(s.id, s);
+      this.closed = [s, ...this.closed.filter((c) => c.id !== s.id)].slice(0, 6);
+    }
+    // The row goes away from under the pointer, and no hover-out comes.
+    this.hovered = null;
+  }
+
+  // The right-click menu's items (runs in the popup's own copy of this mod).
+  // Archive goes back to the sidebar's copy through shared state, which keeps Archived.
+  agentMenuItems(m) {
+    return [
+      { id: "rename", label: "Rename agent", icon: "square-pen", on: true, go: () =>
+        // Saving it empty gives the tab its number back, so the row follows the agent's title again.
+        openOverlay({ mod: "prompt", kind: "dialog", width: 420, height: 210, props: {
+          title: "Rename agent", value: m.name, hint: "Leave it empty to follow the agent's own title again.",
+          command: { name: "tab.rename", args: { id: m.tab } },
+        } }) },
+      // A fork of its Claude session in a new space beside it: same history, its own future.
+      { id: "copy", label: "Copy agent", icon: "files", on: Boolean(m.session && m.cwd), go: () =>
+        run("space.new", { machine: m.machine, folder: m.cwd, name: `${m.name} (copy)`, argv: ["claude", "--resume", m.session, "--fork-session"] }) },
+      { id: "archive", label: m.working ? "Stop and archive" : "Archive agent", icon: "archive", on: true, go: () =>
+        setShared("agents-mine.archive", { address: m.address, name: m.name, at: Date.now() }) },
+    ];
+  }
+
+  agentMenu(t) {
+    const m = props().agentMenu;
+    const items = this.agentMenuItems(m);
+    const choose = (it) => {
+      if (!it?.on) return;
+      closeOverlay(props().overlay);
+      it.go();
+    };
+    return v_flex()
+      .id("agent-menu")
+      .track_focus(this.handle)
+      .w_full()
+      .min_h(0)
+      .p(5)
+      .bg(t.popover)
+      .text_size(12.8)
+      .on_key_down((e, cx) => {
+        // Nothing picked yet: down starts at the top, up at the bottom.
+        const n = items.length;
+        const from = (d) => (this.at >= 0 ? this.at : d > 0 ? -1 : n);
+        const step = (d) => { for (let i = 1; i <= n; i++) { const j = (from(d) + d * i + n * 2) % n; if (items[j].on) return j; } return this.at; };
+        if (e.key === "down") this.at = step(1);
+        else if (e.key === "up") this.at = step(-1);
+        else if (e.key === "enter") return choose(items[this.at]);
+        else if (e.key === "escape") return closeOverlay(props().overlay);
+        else return;
+        cx.notify();
+      })
+      .children(items.map((it, i) => v_flex()
+        .when(it.id === "archive", (el) => el.child(div().mx(7).my(4).h(1).bg(t.border)))
+        .child(h_flex()
+          .id(`am-${it.id}`)
+          .h(31)
+          .px(8)
+          .gap(9)
+          .rounded(7)
+          .items_center()
+          .text_color(it.on ? t.foreground : t.dim)
+          .when(it.on && i === this.at, (el) => el.bg(t.selected))
+          .when(it.on, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => choose(it)))
+          .when(!it.on, (el) => el.tooltip("Only Claude agents whose session is known can be copied"))
+          .child(svg(`mods/workspace-chrome/${it.icon}.svg`).size(14).flex_none().text_color(it.on ? t.muted : t.dim))
+          .child(div().flex_1().child(it.label)))));
+  }
+
   sortMenu(t) {
     const on = sortOf().id;
     return v_flex()
@@ -562,6 +650,14 @@ export default class Agents extends View {
     if (props()?.sortMenu) return this.sortMenu(t);
     if (props()?.calendar) return this.calendar(t);
     if (props()?.hover) return this.hoverCard(t, props().hover);
+    if (props()?.agentMenu) return this.agentMenu(t);
+    // Archive chosen in the right-click menu: done here, where Archived is kept. Once per choice.
+    const asked = shared("agents-mine.archive");
+    if (asked && asked.at !== this.archivedAsk) {
+      this.archivedAsk = asked.at;
+      const a = Date.now() - asked.at < 10000 && agents().find((x) => x.address === asked.address);
+      if (a) this.archive(a, asked.name);
+    }
     const collapsed = narrow();
     const sort = sortOf();
     let list = agents();
@@ -670,21 +766,7 @@ export default class Agents extends View {
         .tooltip(a.status === "working" ? "Stop and archive" : "Archive")
         .on_click((_e, cx) => {
           cx.stop_propagation();
-          // The agent alone in its tab: close the tab, confirmed, so the last one
-          // takes its space with it without asking. Agents are easy to start again.
-          const tab = tabs.find((tb) => tb.id === a.tab);
-          if (tab && tab.panes <= 1) run("tab.close", { id: a.tab, confirmed: true });
-          else run("pane.close", { pane: a.pane });
-          // Straight to the top of Archived, without waiting for closed.py to notice.
-          const lab = all.find((x) => x.address === a.address)?.labels ?? {};
-          if (lab["herdr.session"] && lab["herdr.cwd"]) {
-            const s = { id: lab["herdr.session"], title: name, cwd: lab["herdr.cwd"], at: Date.now() };
-            this.archiving = this.archiving ?? new Map();
-            this.archiving.set(s.id, s);
-            this.closed = [s, ...this.closed.filter((c) => c.id !== s.id)].slice(0, 6);
-          }
-          // The row goes away from under the pointer, and no hover-out comes.
-          this.hovered = null;
+          this.archive(a, name);
           cx.notify();
         })
         .child(svg("mods/workspace-chrome/x.svg").size(13));
@@ -724,6 +806,16 @@ export default class Agents extends View {
           cx.notify();
         })
         .on_click(() => run("pane.focus", { pane: a.pane }))
+        // Right-click: a menu at the pointer to rename, copy or archive the agent.
+        .on_mouse_down("right", (_e, cx) => {
+          cx.stop_propagation();
+          this.hideCard();
+          openOverlay({ mod: "agents-mine", kind: "popup", width: 200, height: 112, props: { agentMenu: {
+            address: a.address, tab: a.tab, name, working: a.status === "working",
+            session: lab["herdr.session"] || "", cwd: lab["herdr.cwd"] || "", machine: machine || "",
+          } } });
+          cx.notify();
+        })
         .when(Boolean(pic), el => el.child(div().id(`agent-fold-${a.address}`)
           .when(subs.length > 0, el => el.on_click((_e, cx) => {
             cx.stop_propagation();
