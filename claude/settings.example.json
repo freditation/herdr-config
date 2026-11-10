@@ -12,6 +12,12 @@
             "command": "~/.claude/hooks/herdr-asking.py 2>/dev/null || true",
             "timeout": 15,
             "async": true
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/herdr-doing.py 2>/dev/null || true",
+            "timeout": 15,
+            "async": true
           }
         ]
       }
@@ -22,6 +28,24 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/herdr-asking.py 2>/dev/null || true",
+            "timeout": 15,
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/herdr-doing.py 2>/dev/null || true",
+            "timeout": 15,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/herdr-doing.py 2>/dev/null || true",
             "timeout": 15,
             "async": true
           }
@@ -40,6 +64,12 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/herdr-asking.py 2>/dev/null || true",
+            "timeout": 15,
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/herdr-doing.py 2>/dev/null || true",
             "timeout": 15,
             "async": true
           }

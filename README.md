@@ -10,13 +10,14 @@ My setup for [Herdr](https://github.com/herdrdev/herdr-app) with Claude Code: an
   - **Idle:** finished.
   - **Archived:** recent closed sessions, the one you just closed on top. Click one to resume it.
 - **Bold means unread**, in Needs you and Idle, until you've looked at the agent and moved on.
-- **A hover card** on each agent with its task in a sentence: the first sentence of the session's first prompt.
+- **A hover card** on each agent saying what it's working on now, in a sentence a headless Haiku writes after each prompt and turn, plus the step it's on while it runs.
+- **A cloud button** beside `+` that starts Claude on a remote Herdr machine. Hidden until you set `CLOUD_MACHINE` (a name from `hc machine ls`) and `CLOUD_AGENT_FOLDER` at the top of `mods/agents-mine/main.js`. Agents on remote machines get a cloud icon.
 - **Hover the status dot for an ✕.** On a running agent it stops it; on any other it archives it.
 - **A calendar** (the calendar icon) of your Claude cloud routines this week.
 - **My PRs** (`mods/my-prs`): your open and recently merged GitHub pull requests at the bottom of the sidebar. Needs `gh`.
 - **Menu and tabs tweaks** (`mods/menu-mine`, `mods/tabs-mine`), my layout (`layouts/mine.json`) and keys (`keys.json`).
 - **Spaces named after their session**: the `herdr-space-name.py` hook renames a space to its Claude session's title, unless you've named the space yourself.
-- **Claude Code side** (`claude/`): the `herdr-asking.py` and `herdr-space-name.py` hooks and my `statusline.sh`, which shows folder, model, effort and context.
+- **Claude Code side** (`claude/`): the `herdr-asking.py`, `herdr-doing.py` and `herdr-space-name.py` hooks and my `statusline.sh`, which shows folder, model, effort and context.
 
 ## Install
 
@@ -43,7 +44,7 @@ cp claude/hooks/herdr-*.py ~/.claude/hooks/ && chmod +x ~/.claude/hooks/herdr-*.
 cp claude/statusline.sh ~/.claude/ && chmod +x ~/.claude/statusline.sh
 ```
 
-Merge `claude/settings.example.json` into `~/.claude/settings.json` by hand, keeping any hooks you already have. The hooks only do anything inside Herdr. `herdr-asking.py` sets two labels on the terminal: `herdr.asking` when a turn ends on a question, and `herdr.task` with the session's task. `herdr-space-name.py` runs when a turn ends and names the space after the session's terminal title, but only while the space still has Herdr's automatic name (or one it set itself), and only from the space's first terminal. The status line needs `jq`.
+Merge `claude/settings.example.json` into `~/.claude/settings.json` by hand, keeping any hooks you already have. The hooks only do anything inside Herdr. `herdr-asking.py` sets `herdr.asking` on the terminal when a turn ends on a question. `herdr-doing.py` sets `herdr.task` (what the session is doing, summarised by `claude -p --model haiku` in the background, a fraction of a cent each time) and `herdr.now` (the current step). `herdr-space-name.py` puts the session's terminal title in `herdr.title` when a turn ends; the sidebar mod renames the space to its first terminal's title unless you've named the space yourself. The status line needs `jq`.
 
 ### Calendar of Claude cloud routines (optional)
 

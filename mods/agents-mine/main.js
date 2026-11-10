@@ -6,6 +6,9 @@ import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 // Where the + button starts a new Claude agent, under your home folder ("" = home itself).
 const NEW_AGENT_FOLDER = "";
+// The cloud button starts one on this machine (`hc machine ls`) instead, in this folder there.
+const CLOUD_MACHINE = "";
+const CLOUD_AGENT_FOLDER = "";
 
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, home, appHome, exec } from "herdr";
 
@@ -107,6 +110,11 @@ function icon(p, size, color) {
   return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
 }
 
+// An agent on another machine (its address is `machine/t7`) gets a cloud instead.
+const remoteOf = (address) => (address.includes("/") ? address.split("/")[0] : null);
+const agentIcon = (a, size, color) =>
+  remoteOf(a.address) ? svg("mods/agents-mine/cloud.svg").size(size).flex_none().text_color(color) : icon(a.program, size, color);
+
 export default class Agents extends View {
   init(_props, cx) {
     if (props()?.sortMenu) return;
@@ -133,6 +141,82 @@ export default class Agents extends View {
     cx.timer.every(3000, (cx) => {
       const now = agents().map((a) => a.address).join();
       if (now !== this.agentsSeen || Date.now() - (this.closedAt ?? 0) > 60000) this.refreshClosed(cx);
+    });
+    this.adoptOldSpaceNames(cx);
+    // Tabs this mod named after their space (tab id -> name).
+    this.tabNames = JSON.parse(localStorage.getItem("tabNames") ?? "{}");
+    cx.timer.every(3000, () => this.nameSpaces());
+  }
+
+  // Each space takes its first terminal's title at the end of a turn: the
+  // herdr-space-name Claude hook (on this Mac and on other machines) puts it in
+  // the `herdr.title` label. Only a space nobody named, or one named here before
+  // and not renamed by hand since; a name someone chose stays.
+  nameSpaces() {
+    // Not before adoptOldSpaceNames has run.
+    if (localStorage.getItem("spaceNames") === null) return;
+    const ours = JSON.parse(localStorage.getItem("spaceNames") ?? "{}");
+    const byAddress = new Map(terminals().map((x) => [x.address, x]));
+    const all = panes();
+    const live = spaces();
+    let changed = false;
+    for (const s of live) {
+      const first = s.tabs[0] && all.find((p) => p.tab === s.tabs[0].id && p.terminal);
+      const want = byAddress.get(first?.terminal)?.labels?.["herdr.title"];
+      if (!want || s.name === want) continue;
+      if (s.named && s.name !== ours[s.id]) continue;
+      run("space.rename", { id: s.id, name: want });
+      ours[s.id] = want;
+      changed = true;
+    }
+    // Forget closed spaces, but only once spaces have loaded.
+    if (live.length) {
+      const ids = new Set(live.map((s) => s.id));
+      for (const id of Object.keys(ours)) if (!ids.has(id)) { delete ours[id]; changed = true; }
+    }
+    if (changed) localStorage.setItem("spaceNames", JSON.stringify(ours));
+    this.nameTabs(live, all);
+  }
+
+  // Each agent's tab takes the name its sidebar row shows (its own title, else its
+  // space), so the tab bar matches the row instead of reading "1". A tab someone
+  // named by hand keeps its name.
+  nameTabs(live, all) {
+    const ours = this.tabNames;
+    let changed = false;
+    for (const s of live) {
+      for (const tab of s.tabs) {
+        const l = lead(tab, all);
+        if (!l?.program?.agent) continue;
+        if (tab.named && tab.name !== ours[tab.id]) continue;
+        // What the row shows: the agent's own title, else its space.
+        const live = title({ ...tab, name: String(tab.index), named: false }, l);
+        const want = /^\d+$/.test(live) ? s.name : live;
+        if (!want || tab.name === want) continue;
+        run("tab.rename", { id: tab.id, name: want });
+        ours[tab.id] = want;
+        changed = true;
+      }
+    }
+    if (live.length) {
+      const ids = new Set(live.flatMap((s) => s.tabs.map((t) => t.id)));
+      for (const id of Object.keys(ours)) if (!ids.has(id)) { delete ours[id]; changed = true; }
+    }
+    if (changed) localStorage.setItem("tabNames", JSON.stringify(ours));
+  }
+
+  // Once: spaces the old hook named (~/.local/state/herdr-space-name/<space>)
+  // stay ours, so they keep following their agent.
+  adoptOldSpaceNames(cx) {
+    if (localStorage.getItem("spaceNames") !== null) return;
+    cx.spawn(async () => {
+      try {
+        const r = await exec("python3", ["-I", "-c",
+          "import json,os,pathlib;d=pathlib.Path(os.path.expanduser('~/.local/state/herdr-space-name'));" +
+          "print(json.dumps({f.name:f.read_text() for f in d.iterdir()} if d.is_dir() else {}))"]);
+        if (r.code === 0) localStorage.setItem("spaceNames", r.stdout.trim() || "{}");
+      } catch {}
+      if (localStorage.getItem("spaceNames") === null) localStorage.setItem("spaceNames", "{}");
     });
   }
 
@@ -218,24 +302,47 @@ export default class Agents extends View {
         .child(div().flex_none().child(this.routinesAt ? `Updated ${duration(now - this.routinesAt)} ago` : "Not loaded yet")));
   }
 
-  // The hover card: a row's title and its task, as a light panel beside the sidebar.
+  // The hover card: a row's title, what it's working on (herdr-doing's `herdr.task`, kept
+  // current by Haiku) and, while it runs, the step it's on (`herdr.now`).
   hoverCard(t, h) {
     return v_flex().w_full().px(12).py(9).gap(2).rounded(8).bg(t.popover).border(1).border_color(t.border).shadow_sm()
       .child(div().text_size(12.5).font_family(".SystemUIFont").font_weight(600).text_color(t.foreground).child(h.name))
-      .child(div().text_size(12.5).text_color(t.muted).child(h.task));
+      .when(Boolean(h.task), (el) => el.child(div().text_size(12.5).text_color(t.muted).child(h.task)))
+      .when(Boolean(h.now), (el) => el.child(div().pt(2).text_size(11.5).text_color(t.dim).truncate().child(`Now: ${h.now}`)));
   }
 
-  showCard(a, name, task) {
+  // Opens (or refreshes in place) the card of the row under the pointer, from the last render's info,
+  // just below and right of the pointer, like a tooltip.
+  showCard(address) {
     const b = this.hoverAt;
-    if (!b || this.hovered !== a.address) return;
+    const p = this.pointer;
+    const info = this.cardInfo?.get(address);
+    if (!b || !p || this.hovered !== address || !info || !(info.task || info.now)) return this.hideCard();
+    const key = JSON.stringify(info);
+    if (this.card && this.cardFor === address && this.cardKey === key) return;
+    // Refreshing in place keeps the spot it opened at; only a new card goes to the pointer.
+    const at = this.card && this.cardFor === address ? this.cardPos : { x: Math.round(p.x + 12), y: Math.round(p.y + 18) };
     this.hideCard();
-    this.card = openOverlay({ mod: "agents-mine", kind: "window", frame: "none", key: "agents-hover", width: 300,
-      at: { x: Math.round(b.x + b.width + 10), y: Math.round(b.y - 6) }, props: { hover: { name, task } } });
+    // No `key`: a keyed window reopens where it last was, not at `at`.
+    this.card = openOverlay({ mod: "agents-mine", kind: "window", frame: "none", width: 300, at, props: { hover: info } });
+    this.cardPos = at;
+    this.cardFor = address;
+    this.cardKey = key;
+    this.cardAt = b;
   }
 
   hideCard() {
     if (this.card) closeOverlay(this.card);
-    this.card = null;
+    this.card = this.cardFor = this.cardKey = this.cardAt = null;
+  }
+
+  // The pointer left the rows some way that a row's hover-out can miss (out of the window,
+  // a scroll moving rows under it, onto the card): nothing is hovered any more.
+  unhover(cx) {
+    if (!this.hovered && !this.card) return;
+    this.hovered = null;
+    this.hideCard();
+    cx?.notify();
   }
 
   // Bold = unread, in Needs you and in Idle: until you've looked at it and moved on. A Needs-you
@@ -413,7 +520,7 @@ export default class Agents extends View {
   subRow(t, s, shown, compact) {
     const k = s.t;
     const st = kidStatus(k, this.listed);
-    const pic = icon(k.program, 14, t.foreground);
+    const pic = agentIcon(k, 14, t.foreground);
     const on = k.address === shown;
     return h_flex()
       .id(`sub-${k.address}`)
@@ -458,13 +565,14 @@ export default class Agents extends View {
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
     this.asking = new Set(all.filter((x) => x.labels?.["herdr.asking"]).map((x) => x.address));
-    // Each session's task in a sentence (the herdr-asking hook's `herdr.task`), for hovering its row.
-    const tasks = new Map(all.filter((x) => x.labels?.["herdr.task"]).map((x) => [x.address, x.labels["herdr.task"]]));
+    // What each session is working on and the step it's on (the herdr-doing hook's labels), for hovering its row.
+    const labelsOf = new Map(all.map((x) => [x.address, x.labels ?? {}]));
+    this.cardInfo = new Map();
     this.migratePins(all);
     const shown = focused()?.agent;
     const now = Date.now();
     // A row can go (closed, moved) without a hover-out: don't leave its card behind.
-    if (this.card && !this.hovered) this.hideCard();
+    if (this.card && (!this.hovered || this.cardFor !== this.hovered)) this.hideCard();
     this.track(list, now);
     this.hold(list);
     const byPriority = sort.id === "priority";
@@ -516,7 +624,10 @@ export default class Agents extends View {
     const tabs = spaces().flatMap(s => s.tabs);
     const label = (a) => {
       const tab = tabs.find(tab => tab.id === a.tab);
-      return tab ? title(tab, lead(tab)) : a.title || a.program?.name || "";
+      if (!tab) return a.title || a.program?.name || "";
+      // A tab named here after its space reads as unnamed, so rows don't repeat the space.
+      const own = this.tabNames[tab.id] === tab.name ? { ...tab, name: String(tab.index), named: false } : tab;
+      return title(own, lead(tab));
     };
     const detail = new Map(list.map(a => [a.address, /^\d+$/.test(label(a)) ? null : label(a)]));
     const seen = {};
@@ -526,10 +637,10 @@ export default class Agents extends View {
     }
 
     const row = (a, i, subs = []) => {
-      const pic = icon(a.program, 16, t.foreground);
+      const pic = agentIcon(a, 16, t.foreground);
       const more = detail.get(a.address);
       // An agent on another machine (`vps/t7`) says which.
-      const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
+      const machine = remoteOf(a.address);
       if (collapsed) {
         return h_flex()
           .id(`ag-${a.address}`)
@@ -544,7 +655,6 @@ export default class Agents extends View {
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }
       const when = this.since(a);
-      const task = tasks.get(a.address);
       const isPinned = a.pinned;
       const pin = div()
         .id(`close-${a.address}`)
@@ -583,6 +693,8 @@ export default class Agents extends View {
       // space rename at the end of the turn. The space only when there's no title.
       const name = full ? more || a.space_name || label(a) : more ?? (/^\d+$/.test(label(a)) ? a.program?.name || label(a) : label(a));
       const extra = null;
+      const lab = labelsOf.get(a.address) ?? {};
+      this.cardInfo.set(a.address, { name, task: lab["herdr.task"] || "", now: a.status === "working" ? lab["herdr.now"] || "" : "" });
       return h_flex()
         .id(`ag-${a.address}`)
         .px(8)
@@ -594,14 +706,17 @@ export default class Agents extends View {
         .when(a.focused, (el) => el.bg(t.selected))
         .cursor_pointer()
         .hover((s) => s.bg(t.hover))
-        .on_mouse_move((e) => { this.hoverAt = e.bounds; })
+        .on_mouse_move((e) => { this.hoverAt = e.bounds; this.pointer = e.position; })
         .on_hover((on, cx) => {
+          // Moving between rows, the new row's hover-in can come before the old one's
+          // hover-out: either way, a card that isn't this row's goes now.
           if (on) {
             this.hovered = a.address;
-            if (task) cx.timer.after(450, () => this.showCard(a, name, task));
-          } else if (this.hovered === a.address) {
-            this.hovered = null;
-            this.hideCard();
+            if (this.cardFor !== a.address) this.hideCard();
+            cx.timer.after(450, () => this.showCard(a.address));
+          } else {
+            if (this.hovered === a.address) this.hovered = null;
+            if (this.cardFor === a.address) this.hideCard();
           }
           cx.notify();
         })
@@ -671,6 +786,8 @@ export default class Agents extends View {
       rows.push(header({ id: "closed", label: "Archived", status: null, members: this.closed }));
       if (!this.folded.has("closed")) rows.push(...this.closed.map((s) => this.closedRow(t, s, now)));
     }
+    // An open card follows its agent: a new summary or step lands in it while you look.
+    if (this.card) this.showCard(this.cardFor);
 
     return v_flex()
       .size_full()
@@ -698,9 +815,19 @@ export default class Agents extends View {
                 .text_color(t.dim)
                 .hover((s) => s.text_color(t.foreground))
                 .tooltip(`New Claude agent in ~${NEW_AGENT_FOLDER ? "/" + NEW_AGENT_FOLDER : ""}`)
-                .on_click(() => run("space.new", { folder: NEW_AGENT_FOLDER ? `${home()}/${NEW_AGENT_FOLDER}` : home(), argv: ["claude"] }))
+                .on_click(() => run("space.new", { machine: "", folder: NEW_AGENT_FOLDER ? `${home()}/${NEW_AGENT_FOLDER}` : home(), argv: ["claude"] }))
                 .child(svg("mods/workspace-chrome/plus.svg").size(14)),
             )
+            // The same, but on CLOUD_MACHINE (hidden when it's ""). + stays local, so local is the default.
+            .when(Boolean(CLOUD_MACHINE), (el) => el.child(
+              div()
+                .id("ag-new-cloud")
+                .text_color(t.dim)
+                .hover((s) => s.text_color(t.foreground))
+                .tooltip(`New Claude agent in the cloud (${CLOUD_MACHINE})`)
+                .on_click(() => run("space.new", { machine: CLOUD_MACHINE, folder: CLOUD_AGENT_FOLDER, argv: ["claude"] }))
+                .child(svg("mods/agents-mine/cloud.svg").size(14)),
+            ))
             .child(
               div()
                 .id("ag-calendar")
@@ -725,7 +852,17 @@ export default class Agents extends View {
       .when(list.length === 0 && !collapsed, (el) =>
         el.child(div().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
       )
-      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows))
+      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always")
+        .on_hover((on, cx) => { if (!on) this.unhover(cx); })
+        .on_scroll_wheel((_e, cx) => this.unhover(cx))
+        // Off the row the card is for (by where that row was when it opened): the card goes.
+        // Rows keep their own hover; the one now under the pointer opens its card as usual.
+        .on_mouse_move((e, cx) => {
+          const b = this.cardAt;
+          const p = e.position;
+          if (b && (p.x < b.x || p.x > b.x + b.width || p.y < b.y || p.y > b.y + b.height)) { this.hideCard(); cx.notify(); }
+        })
+        .children(rows))
       .when(collapsed, (el) =>
         el.child(
           h_flex()

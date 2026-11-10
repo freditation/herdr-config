@@ -8,8 +8,7 @@ UserPromptSubmit / SessionStart: clear it (you answered, or started over).
 The agents-mine sidebar mod shows labelled agents under "Needs you"
 until the label is cleared, however many times you look at them.
 
-UserPromptSubmit / SessionStart also set `herdr.task`: the session's task in a
-sentence (the first sentence of its first prompt), shown when you hover its row.
+`herdr.task` (the hover card's description) is herdr-doing.py's.
 """
 import json
 import os
@@ -100,8 +99,6 @@ def main():
         labels.append(f"herdr.session={event['session_id']}")
     if event.get("cwd"):
         labels.append(f"herdr.cwd={event['cwd']}")
-    if kind in ("UserPromptSubmit", "SessionStart"):
-        labels.append(f"herdr.task={sentence(first_prompt(event))}")
     subprocess.run([HC, "label", terminal, *labels], capture_output=True, timeout=10)
 
 
