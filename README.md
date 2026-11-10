@@ -11,7 +11,7 @@ My setup for [Herdr](https://github.com/herdrdev/herdr-app) with Claude Code: an
   - **Archived:** recent closed sessions, the one you just closed on top. Click one to resume it.
 - **Bold means unread**, in Needs you and Idle, until you've looked at the agent and moved on.
 - **A hover card** on each agent saying what it's working on now, in a sentence a headless Haiku writes after each prompt and turn, plus the step it's on while it runs.
-- **A cloud button** beside `+` that starts Claude on a remote Herdr machine. Hidden until you set `CLOUD_MACHINE` (a name from `hc machine ls`) and `CLOUD_AGENT_FOLDER` at the top of `mods/agents-mine/main.js`. Agents on remote machines get a cloud icon.
+- **A cloud button** beside `+` that starts Claude on a remote Herdr machine. Hidden until you set `CLOUD_MACHINE` (a name from `hc machine ls`) and `CLOUD_AGENT_FOLDER` at the top of `mods/agents-mine/main.js`. Agents on remote machines get a cloud icon, in the sidebar and on their tab.
 - **Hover the status dot for an ✕.** On a running agent it stops it; on any other it archives it.
 - **A calendar** (the calendar icon) of your Claude cloud routines this week.
 - **My PRs** (`mods/my-prs`): your open and recently merged GitHub pull requests at the bottom of the sidebar. Needs `gh`.
