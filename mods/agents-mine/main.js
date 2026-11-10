@@ -121,7 +121,21 @@ const agentIcon = (a, size, color) =>
 export default class Agents extends View {
   init(_props, cx) {
     if (props()?.sortMenu) return;
-    if (props()?.hover) return;
+    if (props()?.hover) {
+      // The card closes itself once the pointer is off the row it's for (or the app loses focus):
+      // the sidebar's hover-out can be missed, and a mod reload forgets the card it opened.
+      cx.timer.every(200, () => {
+        const w = globalThis.window;
+        const r = props()?.hover?.rect;
+        let p;
+        try { p = w?.mouse_position?.(); } catch { return; }
+        const off = r && p && (p.x < r.x || p.x > r.x + r.width || p.y < r.y || p.y > r.y + r.height);
+        let away = false;
+        try { away = w?.is_window_active?.() === false; } catch {}
+        if (off || away) closeOverlay(props().overlay);
+      });
+      return;
+    }
     if (props()?.agentMenu) {
       this.at = -1;
       this.handle = cx.focus_handle();
@@ -314,7 +328,8 @@ export default class Agents extends View {
   // The hover card: a row's title, what it's working on (herdr-doing's `herdr.task`, kept
   // current by Haiku) and, while it runs, the step it's on (`herdr.now`).
   hoverCard(t, h) {
-    return v_flex().w_full().px(12).py(9).gap(2).rounded(8).bg(t.popover).border(1).border_color(t.border).shadow_sm()
+    return v_flex().id("hover-card").w_full().px(12).py(9).gap(2).rounded(8).bg(t.popover).border(1).border_color(t.border).shadow_sm()
+      .on_mouse_down("left", (_e, cx) => { cx.stop_propagation(); closeOverlay(props().overlay); })
       .child(div().text_size(12.5).font_family(".SystemUIFont").font_weight(600).text_color(t.foreground).child(h.name))
       .when(Boolean(h.task), (el) => el.child(div().text_size(12.5).text_color(t.muted).child(h.task)))
       .when(Boolean(h.now), (el) => el.child(div().pt(2).text_size(11.5).text_color(t.dim).truncate().child(`Now: ${h.now}`)));
@@ -333,7 +348,7 @@ export default class Agents extends View {
     const at = this.card && this.cardFor === address ? this.cardPos : { x: Math.round(p.x + 12), y: Math.round(p.y + 18) };
     this.hideCard();
     // No `key`: a keyed window reopens where it last was, not at `at`.
-    this.card = openOverlay({ mod: "agents-mine", kind: "window", frame: "none", width: 300, at, props: { hover: info } });
+    this.card = openOverlay({ mod: "agents-mine", kind: "window", frame: "none", width: 300, at, props: { hover: { ...info, rect: b } } });
     this.cardPos = at;
     this.cardFor = address;
     this.cardKey = key;
