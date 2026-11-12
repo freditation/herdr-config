@@ -4,13 +4,63 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-// Where the + button starts a new Claude agent, under your home folder ("" = home itself).
-const NEW_AGENT_FOLDER = "";
-// The cloud button starts one on this machine (`hc machine ls`) instead, in this folder there.
+// Spaces: folders agents run in, listed above the agents, each with its own Claude color.
+// Two are always there: this computer's DEFAULT_DIR (under home) and CLOUD_MACHINE's
+// CLOUD_AGENT_FOLDER. The folder button adds local ones; right-click an added one to remove it.
+// The selected space shows its agents and is where + starts one.
+const DEFAULT_DIR = "";
 const CLOUD_MACHINE = "";
 const CLOUD_AGENT_FOLDER = "";
+const DIR_COLORS = ["#5B8DEF", "#3FAE6A", "#A472E8", "#2AA7B8", "#E05D9A", "#D4A72C"];
 
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, home, appHome, exec } from "herdr";
+
+// Added spaces live in shared state (so the popup's copy of this mod sees them too), backed by localStorage.
+function addedDirs() {
+  let d = shared("agents-mine.dirs");
+  if (!Array.isArray(d)) {
+    try { d = JSON.parse(localStorage.getItem("dirs") ?? "[]"); } catch { d = []; }
+    if (!Array.isArray(d)) d = [];
+    setShared("agents-mine.dirs", d);
+  }
+  return d.filter((x) => x.color && !x.machine);
+}
+function dirsOf() {
+  const fixed = [{ path: DEFAULT_DIR ? `${home()}/${DEFAULT_DIR}` : home(), color: null, machine: "", fixed: true }];
+  if (CLOUD_MACHINE) fixed.push({ path: CLOUD_AGENT_FOLDER, color: null, machine: CLOUD_MACHINE, fixed: true });
+  return [...fixed, ...addedDirs().filter((x) => x.path !== fixed[0].path)];
+}
+function saveDirs(d) {
+  const added = d.filter((x) => !x.fixed).map(({ path, color }) => ({ path, color }));
+  setShared("agents-mine.dirs", added);
+  try { localStorage.setItem("dirs", JSON.stringify(added)); } catch {}
+}
+const dirKey = (d) => `${d.machine || ""}:${d.path}`;
+function selectedDir(dirs = dirsOf()) {
+  let k = shared("agents-mine.dir");
+  if (k === undefined || k === null) { try { k = localStorage.getItem("dir"); } catch {} }
+  return dirs.find((d) => dirKey(d) === k || (!d.machine && d.path === k)) ?? dirs[0];
+}
+function selectDir(d) {
+  setShared("agents-mine.dir", dirKey(d));
+  try { localStorage.setItem("dir", dirKey(d)); } catch {}
+}
+const tilde = (p) => (p === home() ? "~" : p.startsWith(`${home()}/`) ? `~${p.slice(home().length)}` : p);
+const dirName = (p) => (p === home() ? "~" : p.split("/").pop());
+// The space a folder on a machine ("" = this computer) belongs to: that machine's deepest
+// space it's in, else that machine's first space, else the default.
+function dirOf(path, machine, dirs = dirsOf()) {
+  const mine = dirs.filter((d) => (d.machine || "") === (machine || ""));
+  const hits = mine.filter((d) => path && (path === d.path || path.startsWith(`${d.path}/`)));
+  return hits.sort((a, b) => b.path.length - a.path.length)[0] ?? mine[0] ?? dirs[0];
+}
+// A space's mark: a cloud for another machine, else Claude in its color (the default keeps Claude's orange).
+const spaceMark = (d, size, t) => (d?.machine
+  ? svg("mods/agents-mine/cloud.svg").size(size).flex_none().text_color(t.muted)
+  : d?.color
+    ? svg("mods/agents-mine/claude-mono.svg").size(size).flex_none().text_color(d.color)
+    : image("icons/claude.svg").w(size).h(size).flex_none());
+const newAgent = (d) => run("space.new", { machine: d.machine || "", folder: d.path, argv: ["claude"] });
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -120,7 +170,7 @@ const agentIcon = (a, size, color) =>
 
 export default class Agents extends View {
   init(_props, cx) {
-    if (props()?.sortMenu) return;
+    if (props()?.sortMenu || props()?.dirMenu) return;
     if (props()?.hover) {
       // The card closes itself once the pointer is off the row it's for (or the app loses focus):
       // the sidebar's hover-out can be missed, and a mod reload forgets the card it opened.
@@ -390,21 +440,40 @@ export default class Agents extends View {
     for (const k of [...this.needs.keys()]) if (!live.has(k)) this.needs.delete(k);
   }
 
+  // Archived: closed.py on this computer and, run there over hc, on CLOUD_MACHINE
+  // (each session tagged with its machine, so it lands under that machine's space).
   refreshClosed(cx) {
     this.agentsSeen = agents().map((a) => a.address).join();
     this.closedAt = Date.now();
+    this.closedBy = this.closedBy ?? { "": [] };
+    const script = `${appHome()}/mods/agents-mine/closed.py`;
+    const merge = () => {
+      const got = Object.values(this.closedBy).flat();
+      const ids = new Set(got.map((s) => s.id));
+      // One just archived here stays on top until closed.py sees it gone too
+      // (its process can outlive the click by a moment).
+      const keep = [...(this.archiving ?? new Map()).values()].filter((s) => !ids.has(s.id) && Date.now() - s.at < 20000);
+      this.archiving = new Map(keep.map((s) => [s.id, s]));
+      this.closed = [...keep, ...got].sort((a, b) => b.at - a.at);
+    };
     cx.spawn(async (cx) => {
       try {
-        const r = await exec("python3", ["-I", `${appHome()}/mods/agents-mine/closed.py`, "6"]);
-        if (r.code === 0) {
-          // One just archived here stays on top until closed.py sees it gone too
-          // (its process can outlive the click by a moment).
-          const got = JSON.parse(r.stdout);
-          const ids = new Set(got.map((s) => s.id));
-          const keep = [...(this.archiving ?? new Map()).values()].filter((s) => !ids.has(s.id) && Date.now() - s.at < 20000);
-          this.archiving = new Map(keep.map((s) => [s.id, s]));
-          this.closed = [...keep, ...got].slice(0, 6);
+        const r = await exec("python3", ["-I", script, "12"]);
+        if (r.code === 0) { this.closedBy[""] = JSON.parse(r.stdout); merge(); }
+      } catch {}
+      cx.notify();
+    });
+    if (!CLOUD_MACHINE) return;
+    cx.spawn(async (cx) => {
+      try {
+        // The script travels as an argument, so the machine needs only python3.
+        if (!this.closedSrc) {
+          const src = await exec("cat", [script]);
+          if (src.code === 0) this.closedSrc = src.stdout;
         }
+        if (!this.closedSrc) return;
+        const r = await exec("python3", ["-I", "-c", this.closedSrc, "6"], { on: CLOUD_MACHINE, timeout: 30000 });
+        if (r.code === 0) { this.closedBy[CLOUD_MACHINE] = JSON.parse(r.stdout).map((s) => ({ ...s, machine: CLOUD_MACHINE })); merge(); }
       } catch {}
       cx.notify();
     });
@@ -422,13 +491,14 @@ export default class Agents extends View {
       .gap(9)
       .cursor_pointer()
       .hover((el) => el.bg(t.hover))
-      .tooltip(`Resume in ${s.cwd.replace(home(), "~")}`)
+      .tooltip(s.machine ? `Resume on ${s.machine} in ${s.cwd}` : `Resume in ${s.cwd.replace(home(), "~")}`)
       .on_click((_e, cx) => {
-        run("space.new", { folder: s.cwd, name: s.title, argv: ["claude", "--resume", s.id] });
+        run("space.new", { machine: s.machine || "", folder: s.cwd, name: s.title, argv: ["claude", "--resume", s.id] });
         this.closed = this.closed.filter((c) => c.id !== s.id);
         cx.notify();
       })
-      .child(image("icons/claude.svg").w(16).h(16).flex_none().opacity(0.45))
+      // Faded, in the color of the space it ran in.
+      .child(div().flex_none().opacity(0.45).child(spaceMark(dirOf(s.cwd, s.machine || ""), 16, t)))
       .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(s.title))
       .child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - s.at)))
       .child(svg("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim));
@@ -509,10 +579,10 @@ export default class Agents extends View {
     // Straight to the top of Archived, without waiting for closed.py to notice.
     const lab = terminals().find((x) => x.address === a.address)?.labels ?? {};
     if (lab["herdr.session"] && lab["herdr.cwd"]) {
-      const s = { id: lab["herdr.session"], title: name, cwd: lab["herdr.cwd"], at: Date.now() };
+      const s = { id: lab["herdr.session"], title: name, cwd: lab["herdr.cwd"], at: Date.now(), machine: remoteOf(a.address) || "" };
       this.archiving = this.archiving ?? new Map();
       this.archiving.set(s.id, s);
-      this.closed = [s, ...this.closed.filter((c) => c.id !== s.id)].slice(0, 6);
+      this.closed = [s, ...this.closed.filter((c) => c.id !== s.id)];
     }
     // The row goes away from under the pointer, and no hover-out comes.
     this.hovered = null;
@@ -579,6 +649,56 @@ export default class Agents extends View {
           .when(!it.on, (el) => el.tooltip("Only Claude agents whose session is known can be copied"))
           .child(svg(`mods/workspace-chrome/${it.icon}.svg`).size(14).flex_none().text_color(it.on ? t.muted : t.dim))
           .child(div().flex_1().child(it.label)))));
+  }
+
+  // Right-click a space tab: remove it. Its agents keep running and show under the default.
+  dirMenu(t) {
+    const path = props().dirMenu;
+    return v_flex()
+      .w_full()
+      .p(5)
+      .bg(t.popover)
+      .text_size(12.8)
+      .child(div().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).truncate().child(tilde(path)))
+      .child(h_flex()
+        .id("dir-remove")
+        .h(31)
+        .px(8)
+        .gap(9)
+        .rounded(7)
+        .items_center()
+        .text_color(t.foreground)
+        .cursor_pointer()
+        .hover((el) => el.bg(t.hover))
+        .on_click(() => {
+          closeOverlay(props().overlay);
+          const dirs = dirsOf();
+          if (!selectedDir(dirs).machine && selectedDir(dirs).path === path) selectDir(dirs[0]);
+          saveDirs(dirs.filter((d) => d.fixed || d.path !== path));
+        })
+        .child(svg("mods/workspace-chrome/x.svg").size(14).flex_none().text_color(t.muted))
+        .child(div().flex_1().child("Remove space")));
+  }
+
+  // The folder button: macOS's folder chooser, then a new space with the next free color.
+  addDir(cx) {
+    cx.spawn(async (cx) => {
+      try {
+        const r = await exec("osascript", ["-e",
+          'tell application (path to frontmost application as text) to POSIX path of (choose folder with prompt "Add a space: agents started in it get their own Claude color")'],
+          { timeout: 600000 });
+        const path = r.code === 0 ? r.stdout.trim().replace(/\/+$/, "") || "/" : "";
+        if (!path) return;
+        const dirs = dirsOf();
+        if (!dirs.some((d) => !d.machine && d.path === path)) {
+          const used = new Set(dirs.map((d) => d.color));
+          const color = DIR_COLORS.find((c) => !used.has(c)) ?? DIR_COLORS[dirs.length % DIR_COLORS.length];
+          saveDirs([...dirs, { path, color }]);
+        }
+        selectDir({ machine: "", path });
+      } catch {}
+      cx.notify();
+    });
   }
 
   sortMenu(t) {
@@ -663,6 +783,7 @@ export default class Agents extends View {
   render(cx) {
     const t = theme();
     if (props()?.sortMenu) return this.sortMenu(t);
+    if (props()?.dirMenu) return this.dirMenu(t);
     if (props()?.calendar) return this.calendar(t);
     if (props()?.hover) return this.hoverCard(t, props().hover);
     if (props()?.agentMenu) return this.agentMenu(t);
@@ -694,6 +815,19 @@ export default class Agents extends View {
     const rankOf = (a) => urgency.get(a.address);
     if (byPriority) list = [...list].sort((x, y) => sectionPos(rankOf(x)) - sectionPos(rankOf(y)) || this.since(y) - this.since(x) || y.seq - x.seq);
     this.noteNeeds(list, rankOf);
+    // Only the selected space's agents (an agent on another machine counts as the default's).
+    const dirs = dirsOf();
+    const sel = selectedDir(dirs);
+    const spaceOf = new Map(spaces().map((x) => [x.id, x]));
+    const dirFor = (a) => {
+      const sp = spaceOf.get(a.space);
+      return dirOf(sp?.folder, remoteOf(a.address) ?? sp?.machine ?? "", dirs);
+    };
+    const needsIn = new Map();
+    if (this.spacesFolded === undefined) { try { this.spacesFolded = localStorage.getItem("spacesFolded") !== "0"; } catch { this.spacesFolded = true; } }
+    const spacesFolded = this.spacesFolded;
+    for (const a of list) if (rankOf(a) >= RANK.asking) needsIn.set(dirKey(dirFor(a)), (needsIn.get(dirKey(dirFor(a))) ?? 0) + 1);
+    list = list.filter((a) => dirFor(a) === sel);
     const pinned = list.filter((a) => a.pinned);
     const rest = list.filter((a) => !a.pinned);
     list = [...pinned, ...rest];
@@ -751,7 +885,8 @@ export default class Agents extends View {
     }
 
     const row = (a, i, subs = []) => {
-      const pic = agentIcon(a, 16, t.foreground);
+      const own = dirFor(a);
+      const pic = own.color && !remoteOf(a.address) && a.program?.icon?.includes("claude") ? spaceMark(own, 16, t) : agentIcon(a, 16, t.foreground);
       const more = detail.get(a.address);
       // An agent on another machine (`vps/t7`) says which.
       const machine = remoteOf(a.address);
@@ -892,9 +1027,11 @@ export default class Agents extends View {
     const rows = collapsed
       ? list.flatMap(withKids)
       : groups.flatMap((g) => [header(g), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
-    if (!collapsed && this.closed.length) {
-      rows.push(header({ id: "closed", label: "Archived", status: null, members: this.closed }));
-      if (!this.folded.has("closed")) rows.push(...this.closed.map((s) => this.closedRow(t, s, now)));
+    // Each space's own six most recent.
+    const closed = this.closed.filter((c) => dirOf(c.cwd, c.machine || "", dirs) === sel).slice(0, 6);
+    if (!collapsed && closed.length) {
+      rows.push(header({ id: "closed", label: "Archived", status: null, members: closed }));
+      if (!this.folded.has("closed")) rows.push(...closed.map((s) => this.closedRow(t, s, now)));
     }
     // An open card follows its agent: a new summary or step lands in it while you look.
     if (this.card) this.showCard(this.cardFor);
@@ -906,6 +1043,51 @@ export default class Agents extends View {
       .border_t(1)
       .border_color(t.border)
       .text_size(13)
+      // Spaces: click one to show its agents (+ below starts there); right-click an added one to remove it.
+      .when(!collapsed, (el) => el
+        // Click the header to fold the list away: then it reads "Spaces" with the selected one beside it.
+        .child(h_flex().id("spaces-head").px(16).h(41).pt(14).pb(5).flex_none().items_center().gap(8).cursor_pointer()
+          .on_click((_e, cx) => {
+            this.spacesFolded = !this.spacesFolded;
+            try { localStorage.setItem("spacesFolded", this.spacesFolded ? "1" : "0"); } catch {}
+            cx.notify();
+          })
+          .child(div().text_size(11.5).font_medium().text_color(t.dim).hover((s) => s.text_color(t.foreground)).child("Spaces"))
+          .child(h_flex().flex_1().min_w(0).gap(6).items_center().justify_end()
+            .when(spacesFolded, (el) => el
+              .when(dirs.some((d) => d !== sel && (needsIn.get(dirKey(d)) ?? 0) > 0), (el) => el.child(div().w(7).h(7).rounded(4).flex_none().bg(t.blocked ?? t.foreground)))
+              .child(spaceMark(sel, 14, t))
+              .child(div().min_w(0).truncate().text_size(12.5).text_color(t.foreground).child(dirName(sel.path)))
+              .child(div().flex_none().text_size(10.5).text_color(t.dim).child(sel.machine || "local"))))
+          .when(!spacesFolded, (el) => el.child(div()
+            .id("dir-add")
+            .text_color(t.dim)
+            .hover((s) => s.text_color(t.foreground))
+            .tooltip("Add a space (a folder on this computer)")
+            .on_click((_e, cx) => { cx.stop_propagation(); this.addDir(cx); })
+            .child(svg("mods/workspace-chrome/folder-plus.svg").size(14)))))
+        .when(!spacesFolded, (el) => el.child(v_flex().px(8).flex_none()
+          .children(dirs.map((d, i) => h_flex()
+            .id(`dir-${i}`)
+            .h(30)
+            .px(8)
+            .gap(9)
+            .rounded(8)
+            .flex_none()
+            .items_center()
+            .cursor_pointer()
+            .when(d === sel, (el) => el.bg(t.selected))
+            .when(d !== sel, (el) => el.hover((s) => s.bg(t.hover)))
+            .tooltip(d.machine ? `${d.machine}:${d.path}` : tilde(d.path))
+            .on_click((_e, cx) => { selectDir(d); cx.notify(); })
+            .when(!d.fixed, (el) => el.on_mouse_down("right", (_e, cx) => {
+              cx.stop_propagation();
+              openOverlay({ mod: "agents-mine", kind: "popup", width: 220, height: 78, props: { dirMenu: d.path } });
+            }))
+            .child(spaceMark(d, 16, t))
+            .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(dirName(d.path)))
+            .when(d !== sel && (needsIn.get(dirKey(d)) ?? 0) > 0, (el) => el.child(div().w(7).h(7).rounded(4).flex_none().bg(t.blocked ?? t.foreground)))
+            .child(div().flex_none().text_size(10.5).text_color(t.dim).child(d.machine || "local")))))))
       .when(!collapsed, (el) =>
         el.child(
           h_flex()
@@ -918,26 +1100,16 @@ export default class Agents extends View {
             .justify_between()
             .child(div().text_size(11.5).font_medium().text_color(t.dim).child("Agents"))
             .child(h_flex().gap(10).items_center()
-            // A new space with Claude already running in NEW_AGENT_FOLDER: one agent, one space.
+            // A new Herdr space with Claude already running in the selected space's folder.
             .child(
               div()
                 .id("ag-new")
                 .text_color(t.dim)
                 .hover((s) => s.text_color(t.foreground))
-                .tooltip(`New Claude agent in ~${NEW_AGENT_FOLDER ? "/" + NEW_AGENT_FOLDER : ""}`)
-                .on_click(() => run("space.new", { machine: "", folder: NEW_AGENT_FOLDER ? `${home()}/${NEW_AGENT_FOLDER}` : home(), argv: ["claude"] }))
+                .tooltip(`New Claude agent in ${tilde(sel.path)}`)
+                .on_click(() => newAgent(sel))
                 .child(svg("mods/workspace-chrome/plus.svg").size(14)),
             )
-            // The same, but on CLOUD_MACHINE (hidden when it's ""). + stays local, so local is the default.
-            .when(Boolean(CLOUD_MACHINE), (el) => el.child(
-              div()
-                .id("ag-new-cloud")
-                .text_color(t.dim)
-                .hover((s) => s.text_color(t.foreground))
-                .tooltip(`New Claude agent in the cloud (${CLOUD_MACHINE})`)
-                .on_click(() => run("space.new", { machine: CLOUD_MACHINE, folder: CLOUD_AGENT_FOLDER, argv: ["claude"] }))
-                .child(svg("mods/agents-mine/cloud.svg").size(14)),
-            ))
             .child(
               div()
                 .id("ag-calendar")

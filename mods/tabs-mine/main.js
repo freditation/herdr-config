@@ -58,6 +58,12 @@ export default class Tabs extends View {
     const space = spaces().find(p => p.active);
     const shown = space?.tabs ?? [];
     const stop = (_e, cx) => cx.stop_propagation();
+    // A local space inside one of the agents sidebar's added spaces (shared "agents-mine.dirs")
+    // gets that space's Claude color, the deepest match winning, as in the sidebar.
+    const folder = space && !space.machine ? space.folder ?? "" : "";
+    const dirColor = (shared("agents-mine.dirs") ?? [])
+      .filter(d => d?.color && !d.machine && (folder === d.path || folder.startsWith(`${d.path}/`)))
+      .sort((a, b) => b.path.length - a.path.length)[0]?.color;
     const button = (id, label, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", stop).on_click(action).child(label);
     const item = (c, i) => {
@@ -76,7 +82,8 @@ export default class Tabs extends View {
         })
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu-mine", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } }); })
         .when(remote, el => el.child(svg("mods/agents-mine/cloud.svg").size(14).text_color(t.muted)))
-        .when(!remote && Boolean(program?.icon), el => el.child(program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14)))
+        .when(!remote && Boolean(dirColor) && Boolean(program?.icon?.includes("claude")), el => el.child(svg("mods/agents-mine/claude-mono.svg").size(14).text_color(dirColor)))
+        .when(!remote && !(dirColor && program?.icon?.includes("claude")) && Boolean(program?.icon), el => el.child(program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14)))
         .child(div().max_w(170).truncate().child(c.zoomed ? `${name} Z` : name))
         .when(c.status === "working", el => el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
         .when(c.status === "blocked" || c.status === "done", el => el.child(div().size(6).rounded(3).bg(t[c.status])))
