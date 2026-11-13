@@ -4,12 +4,12 @@ My setup for [Herdr](https://github.com/herdrdev/herdr-app) with Claude Code: an
 
 ## What you get
 
-- **Spaces** at the top of the sidebar: folders your agents run in, each with its own colour of Claude icon, in the sidebar and on the agent's tab. Click a space to show only its agents (and its Archived) and to make `+` start new ones there. Add a folder with the folder button, and right-click one to remove it. Click the Spaces header to fold the list to one line showing the selected space; a dot there means an agent in another space needs you. Handy if you switch Claude accounts by directory.
+- **Spaces** at the top of the sidebar: folders your agents run in, each with its own colour of Claude icon, in the sidebar and on the agent's tab. Click a space to show only its agents (and its Archived) and to make `+` start new ones there. Add a folder with the folder button, and right-click one to remove it. Click the Spaces header to fold the list to one line showing the selected space; a dot there means an agent in another space needs you. Pair it with [Claude accounts by folder](#claude-accounts-by-folder-optional) and each space is a Claude account, its colour telling you which one an agent is on.
 - **Agents sidebar** (`mods/agents-mine`) with four sections:
   - **Running.**
   - **Needs you:** the agent is blocked on a prompt, or ended its turn on a question. A question still counts while its background subagents run.
   - **Idle:** finished.
-  - **Archived:** recent closed sessions, the one you just closed on top. Click one to resume it. Each space shows its own six, including the cloud machine's.
+  - **Archived:** recent closed sessions, the one you just closed on top. Click one to resume it. Each space shows its own six, including the cloud machine's. Sessions from every Claude account on the machine are listed (`~/.claude` and any `~/.claude-<name>`).
 - **Bold means unread**, in Needs you and Idle, until you've looked at the agent and moved on.
 - **A hover card** on each agent saying what it's working on now, in a sentence a headless Haiku writes after each prompt and turn, plus the step it's on while it runs.
 - **A cloud space** for a remote Herdr machine: select it and `+` starts Claude there. Hidden until you set `CLOUD_MACHINE` (a name from `hc machine ls`) and `CLOUD_AGENT_FOLDER` at the top of `mods/agents-mine/main.js`. Agents on remote machines get a cloud icon, in the sidebar and on their tab.
@@ -54,6 +54,33 @@ cp claude/statusline.sh ~/.claude/ && chmod +x ~/.claude/statusline.sh
 If you already have a `managed-settings.json`, merge the `hooks` in by hand instead of copying over it. On Linux the file is `/etc/claude-code/managed-settings.json`. Don't also list these hooks in your own `settings.json`, or they run twice. For the status line, merge `claude/settings.example.json` into `~/.claude/settings.json`.
 
 The hooks only do anything inside Herdr. `herdr-asking.py` sets `herdr.asking` on the terminal when a turn ends on a question. `herdr-doing.py` sets `herdr.task` (what the session is doing, summarised by `claude -p --model haiku` in the background, a fraction of a cent each time) and `herdr.now` (the current step). `herdr-space-name.py` puts the session's terminal title in `herdr.title` when a turn ends; the sidebar mod renames the space to its first terminal's title unless you've named the space yourself. The status line needs `jq`.
+
+### Claude accounts by folder (optional)
+
+To keep, say, a work and a personal Claude account apart, pick the account by the folder Claude starts in. This `~/.zshrc` function uses `~/.claude-<name>` for anything under `~/accounts/<name>` (other than `work`), and the default `~/.claude` everywhere else:
+
+```zsh
+claude() {
+  local root="$HOME/accounts" name=""
+  [[ "$PWD/" == "$root"/*/* ]] && name="${${PWD#$root/}%%/*}"
+  if [[ -n "$name" && "$name" != work ]]; then
+    CLAUDE_CONFIG_DIR="$HOME/.claude-$name" command claude "$@"
+  else
+    command claude "$@"
+  fi
+}
+```
+
+Herdr starts agents with `zsh -lic claude` in the space's folder, so adding `~/accounts/personal` as a space makes `+` there start Claude on that account, and resuming an archived session picks its account the same way. Point `DEFAULT_DIR` at your main account's folder (e.g. `"accounts/work"`).
+
+Sign each account in once. Claude Code's `!` commands and non-interactive shells don't load `~/.zshrc`, so name the folder explicitly there, or the login lands in `~/.claude` and replaces that account's:
+
+```sh
+CLAUDE_CONFIG_DIR=~/.claude-personal claude auth login   # personal
+claude auth login                                        # default (~/.claude); don't set it to ~/.claude
+```
+
+`claude auth status --json` shows which account a folder is on (`subscriptionType`, `orgName`). Copy your `settings.json` into each new `~/.claude-<name>` if you want the same settings; never copy credentials or `.claude.json`.
 
 ### Calendar of Claude cloud routines (optional)
 

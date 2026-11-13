@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Recent Claude Code sessions that are no longer running, newest first, as JSON.
 
-Each: {id, title, cwd, at (ms)}. Live sessions come from ~/.claude/sessions/<pid>.json
+Each: {id, title, cwd, at (ms)}. Live sessions come from <config>/sessions/<pid>.json
 whose pid is still alive. Only the tail of each transcript is read.
+
+Every Claude account on the machine is read: ~/.claude and any ~/.claude-<name>
+(a CLAUDE_CONFIG_DIR used when accounts switch by folder). Each account gives up to
+LIMIT sessions, so a busy account can't push another's out. Resuming needs no account:
+`claude --resume` runs in the session's folder, which picks the account again.
 
 `at` is when it was archived: the last time this script saw it running (kept in
 ~/.cache/herdr-agents-mine/seen-live.json: not in the mod folder, where writing it
@@ -13,7 +18,9 @@ import glob, json, os, re, sys, time
 from datetime import datetime
 
 LIMIT = int(sys.argv[1]) if len(sys.argv) > 1 else 6
-HOME = os.path.expanduser("~/.claude")
+CONFIGS = [os.path.expanduser("~/.claude")] + sorted(
+    d for d in glob.glob(os.path.expanduser("~/.claude-*")) if os.path.isdir(f"{d}/projects")
+)
 TAIL = 256 * 1024
 
 
@@ -28,7 +35,7 @@ def alive(pid):
 
 
 live = set()
-for f in glob.glob(f"{HOME}/sessions/*.json"):
+for f in (f for c in CONFIGS for f in glob.glob(f"{c}/sessions/*.json")):
     try:
         s = json.load(open(f))
         if s.get("sessionId") and alive(int(s.get("pid", 0))):
@@ -54,23 +61,27 @@ try:
 except Exception:
     pass
 
-files = sorted(glob.glob(f"{HOME}/projects/*/*.jsonl"), key=os.path.getmtime, reverse=True)[: LIMIT * 4]
-# Sessions seen running recently were just archived, however old their last message.
-have = {os.path.basename(f)[:-6] for f in files}
-for sid in seen:
-    if sid not in live and sid not in have:
-        files += glob.glob(f"{HOME}/projects/*/{glob.escape(sid)}.jsonl")[:1]
-out = []
-for f in files:
+
+def recent(config):
+    files = sorted(glob.glob(f"{config}/projects/*/*.jsonl"), key=os.path.getmtime, reverse=True)[: LIMIT * 4]
+    # Sessions seen running recently were just archived, however old their last message.
+    have = {os.path.basename(f)[:-6] for f in files}
+    for sid in seen:
+        if sid not in live and sid not in have:
+            files += glob.glob(f"{config}/projects/*/{glob.escape(sid)}.jsonl")[:1]
+    return sorted(filter(None, map(session, files)), key=lambda s: s["at"], reverse=True)[:LIMIT]
+
+
+def session(f):
     sid = os.path.basename(f)[:-6]
     if sid in live:
-        continue
+        return None
     try:
         with open(f, "rb") as fh:
             fh.seek(max(0, os.path.getsize(f) - TAIL))
             text = fh.read().decode("utf-8", "ignore")
     except Exception:
-        continue
+        return None
     title = custom = cwd = at = None
     # Where it started: `claude --resume` finds a session from that folder only.
     try:
@@ -91,13 +102,15 @@ for f in files:
             at = m.group(1)
     name = custom or title
     if not name or not cwd:
-        continue
+        return None
     try:
         ms = int(datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp() * 1000)
     except Exception:
         ms = int(os.path.getmtime(f) * 1000)
     ms = max(ms, seen.get(sid, 0))
-    out.append({"id": sid, "title": name, "cwd": cwd, "at": ms})
+    return {"id": sid, "title": name, "cwd": cwd, "at": ms}
 
+
+out = [x for c in CONFIGS for x in recent(c)]
 out.sort(key=lambda s: s["at"], reverse=True)
-print(json.dumps(out[:LIMIT]))
+print(json.dumps(out))
