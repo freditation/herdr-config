@@ -57,13 +57,13 @@ The hooks only do anything inside Herdr. `herdr-asking.py` sets `herdr.asking` o
 
 ### Claude accounts by folder (optional)
 
-To keep, say, a work and a personal Claude account apart, pick the account by the folder Claude starts in. This `~/.zshrc` function uses `~/.claude-<name>` for anything under `~/accounts/<name>` (other than `work`), and the default `~/.claude` everywhere else:
+To use several Claude accounts without logging in and out, pick the account by the folder Claude starts in. This `~/.zshrc` function uses `~/.claude-<name>` for anything under `~/accounts/<name>` (other than `main`, your default account), and the default `~/.claude` everywhere else:
 
 ```zsh
 claude() {
   local root="$HOME/accounts" name=""
   [[ "$PWD/" == "$root"/*/* ]] && name="${${PWD#$root/}%%/*}"
-  if [[ -n "$name" && "$name" != work ]]; then
+  if [[ -n "$name" && "$name" != main ]]; then
     CLAUDE_CONFIG_DIR="$HOME/.claude-$name" command claude "$@"
   else
     command claude "$@"
@@ -71,12 +71,12 @@ claude() {
 }
 ```
 
-Herdr starts agents with `zsh -lic claude` in the space's folder, so adding `~/accounts/personal` as a space makes `+` there start Claude on that account, and resuming an archived session picks its account the same way. Point `DEFAULT_DIR` at your main account's folder (e.g. `"accounts/work"`).
+Herdr starts agents with `zsh -lic claude` in the space's folder, so adding `~/accounts/second` as a space makes `+` there start Claude on that account, and resuming an archived session picks its account the same way. Point `DEFAULT_DIR` at your main account's folder (e.g. `"accounts/main"`).
 
 Sign each account in once. Claude Code's `!` commands and non-interactive shells don't load `~/.zshrc`, so name the folder explicitly there, or the login lands in `~/.claude` and replaces that account's:
 
 ```sh
-CLAUDE_CONFIG_DIR=~/.claude-personal claude auth login   # personal
+CLAUDE_CONFIG_DIR=~/.claude-second claude auth login     # second
 claude auth login                                        # default (~/.claude); don't set it to ~/.claude
 ```
 
