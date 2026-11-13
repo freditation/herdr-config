@@ -1,6 +1,15 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, panes, agents, run, openOverlay, theme, window, shared, layout, settings, nextCommand } from "herdr";
+import { spaces, panes, agents, run, openOverlay, theme, window, shared, setShared, layout, settings, nextCommand } from "herdr";
+
+// Closing an agent's tab only puts it away: the agents sidebar settles it (still running,
+// still listed there; its row shows it again) and moves on. Archiving an agent is the
+// sidebar's X or right-click only. Other tabs close as before.
+export function closeTab(id) {
+  if (!id) return;
+  if (agents().some(a => a.tab === id)) setShared("agents-mine.hide", { tab: id, at: Date.now() });
+  else run("tab.close", { id, confirmed: true });
+}
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -15,12 +24,12 @@ export default class Tabs extends View {
   init(_props, cx) {
     this.pressed = null;
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
-    // cmd-w (keys.json: "tabs-mine.close"): close the shown tab, and its space if it's
-    // the last one, without asking. A key can't pass `confirmed` itself.
+    // cmd-w (keys.json: "tabs-mine.close"): close the shown tab as the X does (an agent's is
+    // put away; another closes, and its space if it's the last one, without asking).
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
-        if (c === "close") run("tab.close", { confirmed: true });
+        if (c === "close") closeTab(spaces().find(s => s.active)?.tabs.find(tb => tb.active)?.id);
       }
     });
   }
@@ -56,7 +65,8 @@ export default class Tabs extends View {
   render() {
     const t = theme();
     const space = spaces().find(p => p.active);
-    const shown = space?.tabs ?? [];
+    // Put-away (settled) tabs leave the bar, unless one is still the shown tab.
+    const shown = (space?.tabs ?? []).filter(c => !c.settled || c.active);
     const stop = (_e, cx) => cx.stop_propagation();
     // A local space inside one of the agents sidebar's added spaces (shared "agents-mine.dirs")
     // gets that space's Claude color, the deepest match winning, as in the sidebar.
@@ -87,7 +97,7 @@ export default class Tabs extends View {
         .child(div().max_w(170).truncate().child(c.zoomed ? `${name} Z` : name))
         .when(c.status === "working", el => el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
         .when(c.status === "blocked" || c.status === "done", el => el.child(div().size(6).rounded(3).bg(t[c.status])))
-        .when(c.active, el => el.child(div().id(`close-${c.id}`).text_color(t.dim).on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); run("tab.close", { id: c.id, confirmed: true }); }).child(svg("mods/pane/close.svg").size(12))));
+        .when(c.active, el => el.child(div().id(`close-${c.id}`).text_color(t.dim).on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); closeTab(c.id); }).child(svg("mods/pane/close.svg").size(12))));
     };
     const root = layout(), sidebar = find(root, "sidebar"), w = window();
     // Old saved rails and a dragged-narrow sidebar can be smaller than the window buttons.

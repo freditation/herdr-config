@@ -595,6 +595,27 @@ export default class Agents extends View {
     this.hovered = null;
   }
 
+  // Puts a tab away (the tab bar's X, cmd-w or its Close): settled on this screen, so it
+  // leaves the tab bar but keeps running and keeps its row here; clicking the row shows it
+  // again. Settling leaves the shown tab on screen, so land elsewhere, as archive() does:
+  // the space's next open tab, else the next row below (above, if last) that isn't put away.
+  hideTab(id) {
+    const all = spaces();
+    const space = all.find((s) => s.tabs.some((tb) => tb.id === id));
+    const tab = space?.tabs.find((tb) => tb.id === id);
+    if (!tab) return;
+    run("tab.settle", { id });
+    if (!space.active || !tab.active) return;
+    const other = space.tabs.find((tb) => tb.id !== id && !tb.settled);
+    if (other) return run("tab.select", { id: other.id });
+    const away = new Set(all.flatMap((s) => s.tabs).filter((tb) => tb.settled || tb.id === id).map((tb) => tb.id));
+    const order = this.shownOrder ?? [];
+    const i = order.findIndex((x) => x.tab === id);
+    const open = (x) => !away.has(x.tab);
+    const next = (i < 0 ? [] : [...order.slice(i + 1), ...order.slice(0, i).reverse()]).find(open) ?? order.find(open);
+    if (next) run("pane.focus", { pane: next.pane });
+  }
+
   // The right-click menu's items (runs in the popup's own copy of this mod).
   // Archive goes back to the sidebar's copy through shared state, which keeps Archived.
   agentMenuItems(m) {
@@ -800,6 +821,12 @@ export default class Agents extends View {
       this.archivedAsk = asked.at;
       const a = Date.now() - asked.at < 10000 && agents().find((x) => x.address === asked.address);
       if (a) this.archive(a, asked.name);
+    }
+    // A tab closed from the tab bar (its X, cmd-w, its menu): put away here, not archived.
+    const hide = shared("agents-mine.hide");
+    if (hide && hide.at !== this.hiddenAsk) {
+      this.hiddenAsk = hide.at;
+      if (Date.now() - hide.at < 10000) this.hideTab(hide.tab);
     }
     const collapsed = narrow();
     const sort = sortOf();

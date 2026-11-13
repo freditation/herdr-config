@@ -15,6 +15,7 @@ My setup for [Herdr](https://github.com/herdrdev/herdr-app) with Claude Code: an
 - **A cloud space** for a remote Herdr machine: select it and `+` starts Claude there. Hidden until you set `CLOUD_MACHINE` (a name from `hc machine ls`) and `CLOUD_AGENT_FOLDER` at the top of `mods/agents-mine/main.js`. Agents on remote machines get a cloud icon, in the sidebar and on their tab.
 - **Hover the status dot for an ✕.** On a running agent it stops it; on any other it archives it. Archiving the agent you are on opens the one below it (or above, if it was last).
 - **Right-click an agent** for a menu: rename it (empty goes back to its own title), copy it (forks its Claude session into a new space) or archive it.
+- **Closing a tab doesn't archive.** The tab bar's ✕, ⌘W and the tab's right-click Close only put an agent's tab away (Herdr's `tab.settle`): it leaves the tab bar but keeps running and keeps its row in the sidebar, and clicking the row shows it again. Only the sidebar's ✕ and right-click archive. Tabs without an agent close as before.
 - **A calendar** (the calendar icon) of your Claude cloud routines this week.
 - **My PRs** (`mods/my-prs`): your open and recently merged GitHub pull requests at the bottom of the sidebar. Needs `gh`.
 - **Menu and tabs tweaks** (`mods/menu-mine`, `mods/tabs-mine`), my layout (`layouts/mine.json`) and keys (`keys.json`).
