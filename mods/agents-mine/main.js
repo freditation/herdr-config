@@ -571,11 +571,18 @@ export default class Agents extends View {
 
   // Closes an agent (stopping it if it runs) and puts it at the top of Archived.
   archive(a, name) {
+    // Where to land afterwards: archiving the one you're on opens the row below it
+    // (above, if it was last); archiving another keeps you where you are. Herdr
+    // would otherwise focus whatever it likes once the tab or space goes.
+    const order = this.shownOrder ?? [];
+    const i = order.findIndex((x) => x.address === a.address);
+    const next = a.focused ? (i < 0 ? null : order[i + 1] ?? order[i - 1]) : order.find((x) => x.focused);
     // The agent alone in its tab: close the tab, confirmed, so the last one
     // takes its space with it without asking. Agents are easy to start again.
     const tab = spaces().flatMap((s) => s.tabs).find((tb) => tb.id === a.tab);
     if (tab && tab.panes <= 1) run("tab.close", { id: a.tab, confirmed: true });
     else run("pane.close", { pane: a.pane });
+    if (next && next.address !== a.address) run("pane.focus", { pane: next.pane });
     // Straight to the top of Archived, without waiting for closed.py to notice.
     const lab = terminals().find((x) => x.address === a.address)?.labels ?? {};
     if (lab["herdr.session"] && lab["herdr.cwd"]) {
@@ -1027,6 +1034,8 @@ export default class Agents extends View {
     const rows = collapsed
       ? list.flatMap(withKids)
       : groups.flatMap((g) => [header(g), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
+    // The agents as they read top to bottom, for archive() to find the one below.
+    this.shownOrder = collapsed ? list : groups.flatMap((g) => (this.folded.has(g.id) ? [] : g.members));
     // Each space's own six most recent.
     const closed = this.closed.filter((c) => dirOf(c.cwd, c.machine || "", dirs) === sel).slice(0, 6);
     if (!collapsed && closed.length) {
