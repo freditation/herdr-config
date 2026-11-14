@@ -14,15 +14,25 @@ import { v_flex, h_flex } from "gpui-base";
 // gets Claude's orange if it's the first and nothing else claims the default, else a
 // color of its own. Spaces and agents on CLOUD_MACHINE also get a cloud after their name;
 // local ones get nothing there.
+// Or list your spaces yourself: "spaces" in herdr-config.json replaces DEFAULT_DIR and
+// CLOUD_AGENT_FOLDER with that list, in that order. Each entry is a folder (under home
+// unless it starts with /) or {"path", "name", "color", "machine", "cloud"}: "name" shows
+// instead of the folder's name, "color" is its Claude color (none keeps Claude's orange),
+// "machine" puts it on that Herdr machine, and "cloud": true lists it on this computer and
+// again on CLOUD_MACHINE, same folder under that machine's home, same color.
+// A space can be a link to a folder (say one per Claude account, all linking to one shared
+// folder): agents and archived sessions reported in the real folder still find their space,
+// and resume or copy in the linked folder, so they keep the account it picks.
 // The folder button adds local ones; right-click an added one to remove it.
 // The selected space shows its agents and is where + starts one.
 // Your settings live in ~/.config/herdr-app/herdr-config.json, which updates never touch:
-// {"defaultDir": "", "cloudMachine": "", "cloudAgentFolder": "", "autoUpdate": true}.
+// {"defaultDir": "", "cloudMachine": "", "cloudAgentFolder": "", "autoUpdate": true}, plus "spaces" if you want it.
 // These are the defaults; the file is read at start and every 30 seconds.
 let DEFAULT_DIR = "";
 let CLOUD_MACHINE = "";
 let CLOUD_AGENT_FOLDER = "";
 let AUTO_UPDATE = true;
+let SPACES = null;
 async function loadSettings() {
   try {
     const s = JSON.parse((await readTextFile(`${appHome()}/herdr-config.json`)) ?? "{}");
@@ -30,6 +40,9 @@ async function loadSettings() {
     if (typeof s.cloudMachine === "string") CLOUD_MACHINE = s.cloudMachine;
     if (typeof s.cloudAgentFolder === "string" || Array.isArray(s.cloudAgentFolder)) CLOUD_AGENT_FOLDER = s.cloudAgentFolder;
     AUTO_UPDATE = s.autoUpdate !== false;
+    SPACES = Array.isArray(s.spaces)
+      ? s.spaces.map((x) => (typeof x === "string" ? { path: x } : x)).filter((x) => typeof x?.path === "string" && x.path)
+      : null;
   } catch {}
 }
 const settingsLoaded = loadSettings();
@@ -48,11 +61,75 @@ function addedDirs() {
   return d.filter((x) => x.color && !x.machine);
 }
 function dirsOf() {
-  const fixed = [{ path: DEFAULT_DIR ? `${home()}/${DEFAULT_DIR}` : home(), color: null, machine: "", fixed: true }];
-  if (CLOUD_MACHINE) fixed.push(...cloudDirs());
-  return [...fixed, ...addedDirs().filter((x) => x.path !== fixed[0].path)];
+  const home0 = { path: DEFAULT_DIR ? `${home()}/${DEFAULT_DIR}` : home(), color: null, machine: "", fixed: true };
+  const fixed = SPACES ? listedDirs() : [home0, ...(CLOUD_MACHINE ? cloudDirs() : [])];
+  if (!fixed.length) fixed.push(home0);
+  shareFixed(fixed);
+  const dirs = [...fixed, ...addedDirs().filter((x) => !fixed.some((f) => !f.machine && f.path === x.path))];
+  findReals(dirs);
+  return dirs;
 }
-// The cloud spaces, also shared ("agents-mine.cloud") so tabs-mine marks their tabs alike.
+// The "spaces" list: this computer's first, then other machines'.
+function listedDirs() {
+  const out = [];
+  for (const x of SPACES) {
+    const color = typeof x.color === "string" && x.color ? x.color : null;
+    const name = typeof x.name === "string" && x.name ? x.name : undefined;
+    const machines = x.machine ? [x.machine] : x.cloud && CLOUD_MACHINE ? ["", CLOUD_MACHINE] : [""];
+    for (const machine of machines) {
+      const path = pathOn(x.path, machine);
+      if (path) out.push({ path, color, name, machine, fixed: true });
+    }
+  }
+  return [...out.filter((d) => !d.machine), ...out.filter((d) => d.machine)];
+}
+// A folder under home on a machine ("" = this computer); null until that machine's home is known.
+const homes = {};
+function pathOn(p, machine) {
+  const rel = p.replace(/^~(\/|$)/, "").replace(/\/+$/, "");
+  if (p.startsWith("/")) return p.replace(/\/+$/, "") || "/";
+  const base = machine ? homes[machine] : home();
+  if (!base) { askHome(machine); return null; }
+  return rel ? `${base}/${rel}` : base;
+}
+const homeAsked = {};
+function askHome(machine) {
+  if (Date.now() - (homeAsked[machine] ?? 0) < 60000) return;
+  homeAsked[machine] = Date.now();
+  exec("sh", ["-c", 'printf %s "$HOME"'], { on: machine, timeout: 30000 })
+    .then((r) => { if (r.code === 0 && r.stdout.startsWith("/")) homes[machine] = r.stdout; })
+    .catch(() => {});
+}
+// The fixed spaces, shared so tabs-mine colors their tabs alike: other machines' as
+// "agents-mine.cloud", this computer's as "agents-mine.fixed".
+function shareFixed(fixed) {
+  const pick = (ds) => ds.map(({ path, color, machine }) => ({ path, color, machine }));
+  const cloud = pick(fixed.filter((d) => d.machine));
+  const local = pick(fixed.filter((d) => !d.machine));
+  if (JSON.stringify(shared("agents-mine.cloud") ?? []) !== JSON.stringify(cloud)) setShared("agents-mine.cloud", cloud);
+  if (JSON.stringify(shared("agents-mine.fixed") ?? []) !== JSON.stringify(local)) setShared("agents-mine.fixed", local);
+}
+// Each space's real folder (its links resolved), looked up once per machine.
+const reals = new Map();
+const realAsked = new Map();
+const realOf = (d) => reals.get(dirKey(d)) ?? d.path;
+function findReals(dirs) {
+  const todo = new Map();
+  for (const d of dirs) {
+    const k = dirKey(d);
+    if (reals.has(k) || Date.now() - (realAsked.get(k) ?? 0) < 60000) continue;
+    realAsked.set(k, Date.now());
+    const m = d.machine || "";
+    todo.set(m, [...(todo.get(m) ?? []), d]);
+  }
+  for (const [machine, ds] of todo) {
+    exec("python3", ["-I", "-c", "import json,os,sys; print(json.dumps([os.path.realpath(p) for p in sys.argv[1:]]))", ...ds.map((d) => d.path)],
+      machine ? { on: machine, timeout: 30000 } : { timeout: 30000 })
+      .then((r) => { if (r.code === 0) JSON.parse(r.stdout).forEach((real, i) => reals.set(dirKey(ds[i]), real)); })
+      .catch(() => {});
+  }
+}
+// The cloud spaces from CLOUD_AGENT_FOLDER.
 const baseName = (p) => p.replace(/\/+$/, "").split("/").pop();
 function cloudDirs() {
   const folders = [CLOUD_AGENT_FOLDER].flat().filter(Boolean);
@@ -61,16 +138,13 @@ function cloudDirs() {
   const twin = (path) => locals.find((l) => baseName(l.path) === baseName(path));
   let defaultFree = !folders.some((path) => twin(path)?.color === null);
   const used = new Set(added.map((l) => l.color));
-  const d = folders.map((path) => {
+  return folders.map((path) => {
     let color = twin(path)?.color;
     if (color === undefined && defaultFree) { color = null; defaultFree = false; }
     if (color === undefined) color = DIR_COLORS.find((c) => !used.has(c)) ?? DIR_COLORS[used.size % DIR_COLORS.length];
     if (color) used.add(color);
     return { path, color, machine: CLOUD_MACHINE, fixed: true };
   });
-  const share = d.map(({ path, color, machine }) => ({ path, color, machine }));
-  if (JSON.stringify(shared("agents-mine.cloud") ?? []) !== JSON.stringify(share)) setShared("agents-mine.cloud", share);
-  return d;
 }
 function saveDirs(d) {
   const added = d.filter((x) => !x.fixed).map(({ path, color }) => ({ path, color }));
@@ -89,12 +163,29 @@ function selectDir(d) {
 }
 const tilde = (p) => (p === home() ? "~" : p.startsWith(`${home()}/`) ? `~${p.slice(home().length)}` : p);
 const dirName = (p) => (p === home() ? "~" : p.split("/").pop());
+const spaceName = (d) => d.name ?? dirName(d.path);
 // The space a folder on a machine ("" = this computer) belongs to: that machine's deepest
-// space it's in, else that machine's first space, else the default.
+// space it's in (by the space's folder or the real one behind its link, since Claude reports
+// real folders), else that machine's first space, else the default. Where several spaces
+// link to the same folder, the one nearest the selected space wins.
+const inside = (p, root) => p === root || p.startsWith(`${root}/`);
+const shared_ = (a, b) => { const x = a.split("/"), y = b.split("/"); let i = 0; while (i < x.length && x[i] === y[i]) i++; return i; };
 function dirOf(path, machine, dirs = dirsOf()) {
   const mine = dirs.filter((d) => (d.machine || "") === (machine || ""));
-  const hits = mine.filter((d) => path && (path === d.path || path.startsWith(`${d.path}/`)));
-  return hits.sort((a, b) => b.path.length - a.path.length)[0] ?? mine[0] ?? dirs[0];
+  const hits = path ? mine.filter((d) => inside(path, d.path) || inside(path, realOf(d))) : [];
+  if (!hits.length) return mine[0] ?? dirs[0];
+  const top = Math.max(...hits.map((d) => realOf(d).length));
+  const tied = hits.filter((d) => realOf(d).length === top);
+  if (tied.length === 1) return tied[0];
+  const sel = selectedDir(dirs);
+  return tied.sort((a, b) => shared_(b.path, sel.path) - shared_(a.path, sel.path))[0];
+}
+// The folder to resume or copy a session in: under its space's link rather than the real
+// folder Claude reported, so the folder picks the account that space is for.
+function folderFor(cwd, machine) {
+  const d = dirOf(cwd, machine || "");
+  const real = realOf(d);
+  return d.path !== real && inside(cwd, real) ? d.path + cwd.slice(real.length) : cwd;
 }
 // A space's mark: Claude in its color (the default keeps Claude's orange), wherever it runs.
 const claudeMark = (color, size) => (color
@@ -569,7 +660,7 @@ export default class Agents extends View {
       .hover((el) => el.bg(t.hover))
       .tooltip(s.machine ? `Resume on ${s.machine} in ${s.cwd}` : `Resume in ${s.cwd.replace(home(), "~")}`)
       .on_click((_e, cx) => {
-        run("space.new", { machine: s.machine || "", folder: s.cwd, name: s.title, argv: ["claude", "--resume", s.id] });
+        run("space.new", { machine: s.machine || "", folder: folderFor(s.cwd, s.machine), name: s.title, argv: ["claude", "--resume", s.id] });
         this.closed = this.closed.filter((c) => c.id !== s.id);
         cx.notify();
       })
@@ -704,7 +795,7 @@ export default class Agents extends View {
         } }) },
       // A fork of its Claude session in a new space beside it: same history, its own future.
       { id: "copy", label: "Copy agent", icon: "files", on: Boolean(m.session && m.cwd), go: () =>
-        run("space.new", { machine: m.machine, folder: m.cwd, name: `${m.name} (copy)`, argv: ["claude", "--resume", m.session, "--fork-session"] }) },
+        run("space.new", { machine: m.machine, folder: folderFor(m.cwd, m.machine), name: `${m.name} (copy)`, argv: ["claude", "--resume", m.session, "--fork-session"] }) },
       { id: "archive", label: m.working ? "Stop and archive" : "Archive agent", icon: "archive", on: true, go: () =>
         setShared("agents-mine.archive", { address: m.address, name: m.name, at: Date.now() }) },
     ];
@@ -1181,7 +1272,7 @@ export default class Agents extends View {
             .when(spacesFolded, (el) => el
               .when(dirs.some((d) => d !== sel && (needsIn.get(dirKey(d)) ?? 0) > 0), (el) => el.child(div().w(7).h(7).rounded(4).flex_none().bg(t.blocked ?? t.foreground)))
               .child(spaceMark(sel, 14))
-              .child(div().min_w(0).truncate().text_size(12.5).text_color(t.foreground).child(dirName(sel.path)))
+              .child(div().min_w(0).truncate().text_size(12.5).text_color(t.foreground).child(spaceName(sel)))
               .when(Boolean(sel.machine), (el) => el.child(cloudIcon(t)))
               .child(div().flex_none().text_size(10.5).text_color(t.dim).child(sel.machine || "local"))))
           .when(!spacesFolded, (el) => el.child(div()
@@ -1211,7 +1302,7 @@ export default class Agents extends View {
             }))
             .child(spaceMark(d, 16))
             .child(h_flex().flex_1().min_w(0).gap(6).items_center()
-              .child(div().min_w(0).truncate().text_color(t.foreground).child(dirName(d.path)))
+              .child(div().min_w(0).truncate().text_color(t.foreground).child(spaceName(d)))
               .when(Boolean(d.machine), (el) => el.child(cloudIcon(t))))
             .when(d !== sel && (needsIn.get(dirKey(d)) ?? 0) > 0, (el) => el.child(div().w(7).h(7).rounded(4).flex_none().bg(t.blocked ?? t.foreground)))
             .child(div().flex_none().text_size(10.5).text_color(t.dim).child(d.machine || "local")))))))

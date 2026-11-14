@@ -52,6 +52,21 @@ Your settings live in `~/.config/herdr-app/herdr-config.json`, which updates nev
 
 `defaultDir` is the default space, under your home folder (empty for the home folder itself, `"code"` for `~/code`). `cloudMachine` and `cloudAgentFolder` turn on the [cloud space](#what-you-get). Without the file you get these defaults; the first update writes it for you.
 
+To list your spaces yourself, add `"spaces"`. It replaces the `defaultDir` and `cloudAgentFolder` spaces with that list, in that order (the folder button still adds more):
+
+```json
+"spaces": [
+  "code",
+  { "path": "accounts/work/workspace", "name": "work", "color": "#5B8DEF", "cloud": true },
+  { "path": "accounts/work/workspace/acme", "color": "#5B8DEF", "cloud": true },
+  { "path": "/srv/builds", "machine": "build-box" }
+]
+```
+
+Each entry is a folder (under your home folder unless it starts with `/`) or an object: `name` shows instead of the folder's name, `color` is its Claude colour (none keeps Claude's orange), `machine` puts it on that Herdr machine, and `"cloud": true` lists it here and again on `cloudMachine`, the same folder under that machine's home, in the same colour. Give every space for one Claude account the same colour and the account has one colour everywhere.
+
+A space can be a link to another folder, for example one link per account to one shared workspace. Claude reports the real folder, so the sidebar matches spaces by their real folder too (where several link to the same one, the one nearest the selected space wins), and resuming or copying an agent starts it in the linked folder, so it keeps that space's account. Archived sessions are listed once even when accounts share a `projects` folder.
+
 ### Updates
 
 The sidebar keeps the config current by itself. When Herdr starts and then every hour, `mods/agents-mine/update.py` fetches the latest `main` from this repo and updates the mods you installed from it (`agents-mine`, `tabs-mine`, `menu-mine`, `my-prs`) and the hooks in `~/.config/herdr-app/hooks`. Herdr reloads a changed mod by itself, and a notification says what changed. It never touches your settings, your layouts, `keys.json`, the managed settings or the status line.

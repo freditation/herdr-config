@@ -111,6 +111,11 @@ def session(f):
     return {"id": sid, "title": name, "cwd": cwd, "at": ms}
 
 
-out = [x for c in CONFIGS for x in recent(c)]
+# Accounts can share one projects folder (a link to another's): read each real folder once,
+# and list a session once.
+_real = {}
+for c in CONFIGS:
+    _real.setdefault(os.path.realpath(f"{c}/projects"), c)
+out = list({x["id"]: x for c in _real.values() for x in recent(c)}.values())
 out.sort(key=lambda s: s["at"], reverse=True)
 print(json.dumps(out))

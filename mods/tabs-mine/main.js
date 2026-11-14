@@ -76,10 +76,10 @@ export default class Tabs extends View {
       if (active >= 0) this.scroll.scroll_to_item(active);
     }
     const stop = (_e, cx) => cx.stop_propagation();
-    // A local space inside one of the agents sidebar's added spaces (shared "agents-mine.dirs")
-    // gets that space's Claude color, the deepest match winning, as in the sidebar.
+    // A local space inside one of the agents sidebar's spaces (shared "agents-mine.dirs" and
+    // "agents-mine.fixed") gets that space's Claude color, the deepest match winning, as in the sidebar.
     const folder = space && !space.machine ? space.folder ?? "" : "";
-    const dirColor = (shared("agents-mine.dirs") ?? [])
+    const dirColor = [...(shared("agents-mine.dirs") ?? []), ...(shared("agents-mine.fixed") ?? [])]
       .filter(d => d?.color && !d.machine && (folder === d.path || folder.startsWith(`${d.path}/`)))
       .sort((a, b) => b.path.length - a.path.length)[0]?.color;
     // Likewise a Claude agent on another machine gets its cloud space's color (shared
