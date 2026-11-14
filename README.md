@@ -83,7 +83,19 @@ claude auth login                                         # account 1 (~/.claude
 
 `claude auth status --json` shows which account a folder is on (`subscriptionType`, `orgName`). Copy your `settings.json` into each new `~/.claude-<name>` if you want the same settings; never copy credentials or `.claude.json`.
 
-HappyStack's agent box has the same switch built in, with the default account named in `~/accounts/.default` (griddle's `aws/files/agent_box/README.md`). List the box's account folders in `CLOUD_AGENT_FOLDER`, for example `["/home/jack/accounts/happystack", "/home/jack/accounts/personal"]`, for a cloud space per account.
+The same works on a cloud machine: put the `bash` version of the function in your `~/.bashrc` there (Herdr starts remote agents with `bash -lic claude`) and list the account folders in `CLOUD_AGENT_FOLDER`, for example `["/home/jack/accounts/account-1", "/home/jack/accounts/account-2"]`, for a cloud space per account:
+
+```bash
+claude() {
+  local root="$HOME/accounts" name=""
+  if [[ "$PWD/" == "$root"/*/* ]]; then name="${PWD#"$root"/}"; name="${name%%/*}"; fi
+  if [[ -n "$name" && "$name" != account-1 ]]; then
+    CLAUDE_CONFIG_DIR="$HOME/.claude-$name" command claude "$@"
+  else
+    command claude "$@"
+  fi
+}
+```
 
 ### Calendar of Claude cloud routines (optional)
 
