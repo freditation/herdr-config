@@ -7,7 +7,11 @@ import { v_flex, h_flex } from "gpui-base";
 // Spaces: folders agents run in, listed above the agents, each with its own Claude color.
 // Always there: this computer's DEFAULT_DIR (under home) and CLOUD_MACHINE's
 // CLOUD_AGENT_FOLDER, a folder or a list of them (one cloud space each, say one per
-// Claude account folder; the first is grey, the others get their own color).
+// Claude account folder). A cloud space takes the color of the local space with the
+// same folder name, so an account keeps its color on both machines; one with no twin
+// gets Claude's orange if it's the first and nothing else claims the default, else a
+// color of its own. Spaces and agents on CLOUD_MACHINE also get a cloud after their name;
+// local ones get nothing there.
 // The folder button adds local ones; right-click an added one to remove it.
 // The selected space shows its agents and is where + starts one.
 const DEFAULT_DIR = "";
@@ -32,11 +36,23 @@ function dirsOf() {
   if (CLOUD_MACHINE) fixed.push(...cloudDirs());
   return [...fixed, ...addedDirs().filter((x) => x.path !== fixed[0].path)];
 }
-// The cloud spaces, also shared ("agents-mine.cloud") so tabs-mine colors their tabs.
+// The cloud spaces, also shared ("agents-mine.cloud") so tabs-mine marks their tabs alike.
+const baseName = (p) => p.replace(/\/+$/, "").split("/").pop();
 function cloudDirs() {
   const folders = [CLOUD_AGENT_FOLDER].flat().filter(Boolean);
-  const d = folders.map((path, i) => ({ path, color: i ? DIR_COLORS[(i - 1) % DIR_COLORS.length] : null, machine: CLOUD_MACHINE, fixed: true }));
-  const share = d.filter((x) => x.color).map(({ path, color, machine }) => ({ path, color, machine }));
+  const added = addedDirs();
+  const locals = [{ path: DEFAULT_DIR ? `${home()}/${DEFAULT_DIR}` : home(), color: null }, ...added];
+  const twin = (path) => locals.find((l) => baseName(l.path) === baseName(path));
+  let defaultFree = !folders.some((path) => twin(path)?.color === null);
+  const used = new Set(added.map((l) => l.color));
+  const d = folders.map((path) => {
+    let color = twin(path)?.color;
+    if (color === undefined && defaultFree) { color = null; defaultFree = false; }
+    if (color === undefined) color = DIR_COLORS.find((c) => !used.has(c)) ?? DIR_COLORS[used.size % DIR_COLORS.length];
+    if (color) used.add(color);
+    return { path, color, machine: CLOUD_MACHINE, fixed: true };
+  });
+  const share = d.map(({ path, color, machine }) => ({ path, color, machine }));
   if (JSON.stringify(shared("agents-mine.cloud") ?? []) !== JSON.stringify(share)) setShared("agents-mine.cloud", share);
   return d;
 }
@@ -64,13 +80,13 @@ function dirOf(path, machine, dirs = dirsOf()) {
   const hits = mine.filter((d) => path && (path === d.path || path.startsWith(`${d.path}/`)));
   return hits.sort((a, b) => b.path.length - a.path.length)[0] ?? mine[0] ?? dirs[0];
 }
-// A space's mark: a cloud for another machine (in its color, if it has one), else Claude in
-// its color (the default keeps Claude's orange).
-const spaceMark = (d, size, t) => (d?.machine
-  ? svg("mods/agents-mine/cloud.svg").size(size).flex_none().text_color(d.color ?? t.muted)
-  : d?.color
-    ? svg("mods/agents-mine/claude-mono.svg").size(size).flex_none().text_color(d.color)
-    : image("icons/claude.svg").w(size).h(size).flex_none());
+// A space's mark: Claude in its color (the default keeps Claude's orange), wherever it runs.
+const claudeMark = (color, size) => (color
+  ? svg("mods/agents-mine/claude-mono.svg").size(size).flex_none().text_color(color)
+  : image("icons/claude.svg").w(size).h(size).flex_none());
+const spaceMark = (d, size) => claudeMark(d?.color, size);
+// Marks a space or agent on another machine, after its name.
+const cloudIcon = (t) => svg("mods/agents-mine/cloud.svg").size(14).flex_none().text_color(t.dim);
 const newAgent = (d) => run("space.new", { machine: d.machine || "", folder: d.path, argv: ["claude"] });
 
 function find(node, id) {
@@ -176,8 +192,7 @@ function icon(p, size, color) {
 
 // An agent on another machine (its address is `machine/t7`) gets a cloud instead.
 const remoteOf = (address) => (address.includes("/") ? address.split("/")[0] : null);
-const agentIcon = (a, size, color) =>
-  remoteOf(a.address) ? svg("mods/agents-mine/cloud.svg").size(size).flex_none().text_color(color) : icon(a.program, size, color);
+const agentIcon = (a, size, color) => icon(a.program, size, color);
 
 export default class Agents extends View {
   init(_props, cx) {
@@ -509,8 +524,9 @@ export default class Agents extends View {
         cx.notify();
       })
       // Faded, in the color of the space it ran in.
-      .child(div().flex_none().opacity(0.45).child(spaceMark(dirOf(s.cwd, s.machine || ""), 16, t)))
+      .child(div().flex_none().opacity(0.45).child(spaceMark(dirOf(s.cwd, s.machine || ""), 16)))
       .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(s.title))
+      .when(Boolean(s.machine), (el) => el.child(div().flex_none().opacity(0.6).child(cloudIcon(t))))
       .child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - s.at)))
       .child(svg("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim));
   }
@@ -931,9 +947,10 @@ export default class Agents extends View {
 
     const row = (a, i, subs = []) => {
       const own = dirFor(a);
-      const pic = own.color && !remoteOf(a.address) && a.program?.icon?.includes("claude") ? spaceMark(own, 16, t) : agentIcon(a, 16, (remoteOf(a.address) && own.machine && own.color) || t.foreground);
+      // A Claude agent wears its space's mark: its account's color.
+      const pic = a.program?.icon?.includes("claude") ? spaceMark(own, 16) : agentIcon(a, 16, t.foreground);
       const more = detail.get(a.address);
-      // An agent on another machine (`vps/t7`) says which.
+      // An agent on another machine (`vps/t7`) gets a cloud.
       const machine = remoteOf(a.address);
       if (collapsed) {
         return h_flex()
@@ -1019,6 +1036,7 @@ export default class Agents extends View {
           })).child(pic)))
         .child(h_flex().flex_1().min_w(0).gap(5).items_center()
           .child(div().when(this.unread(a), (el) => el.font_family(".SystemUIFont").font_weight(600)).min_w(0).max_w(extra ? 120 : 200).truncate().text_color(t.foreground).child(name))
+          .when(Boolean(machine), el => el.child(cloudIcon(t)))
           .when(Boolean(extra), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${extra}`))))
         .when(Boolean(machine), el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))
@@ -1103,8 +1121,9 @@ export default class Agents extends View {
           .child(h_flex().flex_1().min_w(0).gap(6).items_center().justify_end()
             .when(spacesFolded, (el) => el
               .when(dirs.some((d) => d !== sel && (needsIn.get(dirKey(d)) ?? 0) > 0), (el) => el.child(div().w(7).h(7).rounded(4).flex_none().bg(t.blocked ?? t.foreground)))
-              .child(spaceMark(sel, 14, t))
+              .child(spaceMark(sel, 14))
               .child(div().min_w(0).truncate().text_size(12.5).text_color(t.foreground).child(dirName(sel.path)))
+              .when(Boolean(sel.machine), (el) => el.child(cloudIcon(t)))
               .child(div().flex_none().text_size(10.5).text_color(t.dim).child(sel.machine || "local"))))
           .when(!spacesFolded, (el) => el.child(div()
             .id("dir-add")
@@ -1131,8 +1150,10 @@ export default class Agents extends View {
               cx.stop_propagation();
               openOverlay({ mod: "agents-mine", kind: "popup", width: 220, height: 78, props: { dirMenu: d.path } });
             }))
-            .child(spaceMark(d, 16, t))
-            .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(dirName(d.path)))
+            .child(spaceMark(d, 16))
+            .child(h_flex().flex_1().min_w(0).gap(6).items_center()
+              .child(div().min_w(0).truncate().text_color(t.foreground).child(dirName(d.path)))
+              .when(Boolean(d.machine), (el) => el.child(cloudIcon(t))))
             .when(d !== sel && (needsIn.get(dirKey(d)) ?? 0) > 0, (el) => el.child(div().w(7).h(7).rounded(4).flex_none().bg(t.blocked ?? t.foreground)))
             .child(div().flex_none().text_size(10.5).text_color(t.dim).child(d.machine || "local")))))))
       .when(!collapsed, (el) =>
