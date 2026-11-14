@@ -12,7 +12,7 @@ My setup for [Herdr](https://github.com/herdrdev/herdr-app) with Claude Code: an
   - **Archived:** recent closed sessions, the one you just closed on top. Click one to resume it. Each space shows its own six, including the cloud machine's. Sessions from every Claude account on the machine are listed (`~/.claude` and any `~/.claude-<name>`).
 - **Bold means unread**, in Needs you and Idle, until you've looked at the agent and moved on.
 - **A hover card** on each agent saying what it's working on now, in a sentence a headless Haiku writes after each prompt and turn, plus the step it's on while it runs.
-- **A cloud space** for a remote Herdr machine: select it and `+` starts Claude there. Hidden until you set `CLOUD_MACHINE` (a name from `hc machine ls`) and `CLOUD_AGENT_FOLDER` at the top of `mods/agents-mine/main.js`. Agents on remote machines get a cloud icon, in the sidebar and on their tab.
+- **A cloud space** for a remote Herdr machine: select it and `+` starts Claude there. Hidden until you set `CLOUD_MACHINE` (a name from `hc machine ls`) and `CLOUD_AGENT_FOLDER` at the top of `mods/agents-mine/main.js`. Agents on remote machines get a cloud icon, in the sidebar and on their tab. `CLOUD_AGENT_FOLDER` can also be a list of folders, one cloud space each: the first has a grey cloud and the others their own colour, so with [Claude accounts by folder](#claude-accounts-by-folder-optional) on the machine too, each cloud space is an account there.
 - **Hover the status dot for an ✕.** On a running agent it stops it; on any other it archives it. Archiving the agent you are on opens the one below it (or above, if it was last).
 - **Right-click an agent** for a menu: rename it (empty goes back to its own title), copy it (forks its Claude session into a new space) or archive it.
 - **Closing a tab doesn't archive.** The tab bar's ✕, ⌘W and the tab's right-click Close only put an agent's tab away (Herdr's `tab.settle`): it leaves the tab bar but keeps running and keeps its row in the sidebar, and clicking the row shows it again. Only the sidebar's ✕ and right-click archive. Tabs without an agent close as before.
@@ -82,6 +82,8 @@ claude auth login                                         # account 1 (~/.claude
 ```
 
 `claude auth status --json` shows which account a folder is on (`subscriptionType`, `orgName`). Copy your `settings.json` into each new `~/.claude-<name>` if you want the same settings; never copy credentials or `.claude.json`.
+
+HappyStack's agent box has the same switch built in, with the default account named in `~/accounts/.default` (griddle's `aws/files/agent_box/README.md`). List the box's account folders in `CLOUD_AGENT_FOLDER`, for example `["/home/jack/accounts/happystack", "/home/jack/accounts/personal"]`, for a cloud space per account.
 
 ### Calendar of Claude cloud routines (optional)
 

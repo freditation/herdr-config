@@ -74,13 +74,18 @@ export default class Tabs extends View {
     const dirColor = (shared("agents-mine.dirs") ?? [])
       .filter(d => d?.color && !d.machine && (folder === d.path || folder.startsWith(`${d.path}/`)))
       .sort((a, b) => b.path.length - a.path.length)[0]?.color;
+    // Likewise a cloud space's color (shared "agents-mine.cloud") for the cloud icon of an
+    // agent on that machine.
+    const cloudColor = (machine) => (shared("agents-mine.cloud") ?? [])
+      .filter(d => d?.color && d.machine === machine && ((space?.folder ?? "") === d.path || (space?.folder ?? "").startsWith(`${d.path}/`)))
+      .sort((a, b) => b.path.length - a.path.length)[0]?.color;
     const button = (id, label, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", stop).on_click(action).child(label);
     const item = (c, i) => {
       const program = panes().find(p => p.tab === c.id && p.program?.agent)?.program ?? panes().find(p => p.tab === c.id)?.program;
       const name = /^tb\d+$/.test(c.name) ? program?.name ?? "Terminal" : c.name;
       // An agent on another machine (address `machine/t7`) gets a cloud, as in the agents sidebar.
-      const remote = agents().some(a => a.tab === c.id && a.address.includes("/"));
+      const remote = agents().find(a => a.tab === c.id && a.address.includes("/"))?.address.split("/")[0];
       return h_flex().id(`tab-${c.id}`).h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8)
         .border(1).border_color(c.active ? t.border : t.chrome).bg(c.active ? t.raised : t.chrome).text_color(c.active ? t.foreground : t.muted)
         .hover(s => s.bg(t.hover))
@@ -91,7 +96,7 @@ export default class Tabs extends View {
           else run("tab.select", { id: c.id });
         })
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu-mine", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } }); })
-        .when(remote, el => el.child(svg("mods/agents-mine/cloud.svg").size(14).text_color(t.muted)))
+        .when(Boolean(remote), el => el.child(svg("mods/agents-mine/cloud.svg").size(14).text_color(cloudColor(remote) ?? t.muted)))
         .when(!remote && Boolean(dirColor) && Boolean(program?.icon?.includes("claude")), el => el.child(svg("mods/agents-mine/claude-mono.svg").size(14).text_color(dirColor)))
         .when(!remote && !(dirColor && program?.icon?.includes("claude")) && Boolean(program?.icon), el => el.child(program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14)))
         .child(div().max_w(170).truncate().child(c.zoomed ? `${name} Z` : name))

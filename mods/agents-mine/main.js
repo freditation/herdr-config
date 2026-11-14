@@ -5,8 +5,10 @@
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 // Spaces: folders agents run in, listed above the agents, each with its own Claude color.
-// Two are always there: this computer's DEFAULT_DIR (under home) and CLOUD_MACHINE's
-// CLOUD_AGENT_FOLDER. The folder button adds local ones; right-click an added one to remove it.
+// Always there: this computer's DEFAULT_DIR (under home) and CLOUD_MACHINE's
+// CLOUD_AGENT_FOLDER, a folder or a list of them (one cloud space each, say one per
+// Claude account folder; the first is grey, the others get their own color).
+// The folder button adds local ones; right-click an added one to remove it.
 // The selected space shows its agents and is where + starts one.
 const DEFAULT_DIR = "";
 const CLOUD_MACHINE = "";
@@ -27,8 +29,16 @@ function addedDirs() {
 }
 function dirsOf() {
   const fixed = [{ path: DEFAULT_DIR ? `${home()}/${DEFAULT_DIR}` : home(), color: null, machine: "", fixed: true }];
-  if (CLOUD_MACHINE) fixed.push({ path: CLOUD_AGENT_FOLDER, color: null, machine: CLOUD_MACHINE, fixed: true });
+  if (CLOUD_MACHINE) fixed.push(...cloudDirs());
   return [...fixed, ...addedDirs().filter((x) => x.path !== fixed[0].path)];
+}
+// The cloud spaces, also shared ("agents-mine.cloud") so tabs-mine colors their tabs.
+function cloudDirs() {
+  const folders = [CLOUD_AGENT_FOLDER].flat().filter(Boolean);
+  const d = folders.map((path, i) => ({ path, color: i ? DIR_COLORS[(i - 1) % DIR_COLORS.length] : null, machine: CLOUD_MACHINE, fixed: true }));
+  const share = d.filter((x) => x.color).map(({ path, color, machine }) => ({ path, color, machine }));
+  if (JSON.stringify(shared("agents-mine.cloud") ?? []) !== JSON.stringify(share)) setShared("agents-mine.cloud", share);
+  return d;
 }
 function saveDirs(d) {
   const added = d.filter((x) => !x.fixed).map(({ path, color }) => ({ path, color }));
@@ -54,9 +64,10 @@ function dirOf(path, machine, dirs = dirsOf()) {
   const hits = mine.filter((d) => path && (path === d.path || path.startsWith(`${d.path}/`)));
   return hits.sort((a, b) => b.path.length - a.path.length)[0] ?? mine[0] ?? dirs[0];
 }
-// A space's mark: a cloud for another machine, else Claude in its color (the default keeps Claude's orange).
+// A space's mark: a cloud for another machine (in its color, if it has one), else Claude in
+// its color (the default keeps Claude's orange).
 const spaceMark = (d, size, t) => (d?.machine
-  ? svg("mods/agents-mine/cloud.svg").size(size).flex_none().text_color(t.muted)
+  ? svg("mods/agents-mine/cloud.svg").size(size).flex_none().text_color(d.color ?? t.muted)
   : d?.color
     ? svg("mods/agents-mine/claude-mono.svg").size(size).flex_none().text_color(d.color)
     : image("icons/claude.svg").w(size).h(size).flex_none());
@@ -920,7 +931,7 @@ export default class Agents extends View {
 
     const row = (a, i, subs = []) => {
       const own = dirFor(a);
-      const pic = own.color && !remoteOf(a.address) && a.program?.icon?.includes("claude") ? spaceMark(own, 16, t) : agentIcon(a, 16, t.foreground);
+      const pic = own.color && !remoteOf(a.address) && a.program?.icon?.includes("claude") ? spaceMark(own, 16, t) : agentIcon(a, 16, (remoteOf(a.address) && own.machine && own.color) || t.foreground);
       const more = detail.get(a.address);
       // An agent on another machine (`vps/t7`) says which.
       const machine = remoteOf(a.address);
