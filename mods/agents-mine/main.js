@@ -1,6 +1,8 @@
 // Agents in grouped or priority views; parents take their most urgent sub-agent's place.
 // Sections: Running, Needs you, Idle, Archived. Bold = unread (Needs you and Idle) until looked at and left.
 // The calendar icon opens a week of Claude cloud routines (routines.json).
+// Keeps itself current: update.py, run at start and hourly, pulls the latest mods and hooks
+// from github.com/freditation/herdr-config (see herdr-config.json below to turn it off).
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -14,12 +16,26 @@ import { v_flex, h_flex } from "gpui-base";
 // local ones get nothing there.
 // The folder button adds local ones; right-click an added one to remove it.
 // The selected space shows its agents and is where + starts one.
-const DEFAULT_DIR = "";
-const CLOUD_MACHINE = "";
-const CLOUD_AGENT_FOLDER = "";
+// Your settings live in ~/.config/herdr-app/herdr-config.json, which updates never touch:
+// {"defaultDir": "", "cloudMachine": "", "cloudAgentFolder": "", "autoUpdate": true}.
+// These are the defaults; the file is read at start and every 30 seconds.
+let DEFAULT_DIR = "";
+let CLOUD_MACHINE = "";
+let CLOUD_AGENT_FOLDER = "";
+let AUTO_UPDATE = true;
+async function loadSettings() {
+  try {
+    const s = JSON.parse((await readTextFile(`${appHome()}/herdr-config.json`)) ?? "{}");
+    if (typeof s.defaultDir === "string") DEFAULT_DIR = s.defaultDir;
+    if (typeof s.cloudMachine === "string") CLOUD_MACHINE = s.cloudMachine;
+    if (typeof s.cloudAgentFolder === "string" || Array.isArray(s.cloudAgentFolder)) CLOUD_AGENT_FOLDER = s.cloudAgentFolder;
+    AUTO_UPDATE = s.autoUpdate !== false;
+  } catch {}
+}
+const settingsLoaded = loadSettings();
 const DIR_COLORS = ["#5B8DEF", "#3FAE6A", "#A472E8", "#2AA7B8", "#E05D9A", "#D4A72C"];
 
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, home, appHome, exec } from "herdr";
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, home, appHome, exec, readTextFile, notify } from "herdr";
 
 // Added spaces live in shared state (so the popup's copy of this mod sees them too), backed by localStorage.
 function addedDirs() {
@@ -196,6 +212,8 @@ const agentIcon = (a, size, color) => icon(a.program, size, color);
 
 export default class Agents extends View {
   init(_props, cx) {
+    // Every copy redraws once the settings are in (the spaces depend on them).
+    cx.spawn(async (cx) => { await settingsLoaded; cx.notify(); });
     if (props()?.sortMenu || props()?.dirMenu) return;
     if (props()?.hover) {
       // The card closes itself once the pointer is off the row it's for (or the app loses focus):
@@ -232,11 +250,14 @@ export default class Agents extends View {
     this.pendingPins = JSON.parse(localStorage.getItem("pins") ?? "[]");
     if (!this.pendingPins.length) localStorage.removeItem("pins");
     this.migratingPins = new Set();
-    cx.timer.every(30000, (cx) => cx.notify());
+    cx.timer.every(30000, (cx) => cx.spawn(async (cx) => { await loadSettings(); cx.notify(); }));
     // Closed: recent Claude sessions no longer running (closed.py). Looked for again
     // when the agents change (one just closed), else once a minute.
     this.closed = [];
-    this.refreshClosed(cx);
+    cx.spawn(async (cx) => { await settingsLoaded; this.refreshClosed(cx); });
+    // Updates from GitHub: shortly after start, then hourly. One run per hour across copies.
+    cx.timer.after(15000, (cx) => this.selfUpdate(cx));
+    cx.timer.every(3600000, (cx) => this.selfUpdate(cx));
     cx.timer.every(3000, (cx) => {
       const now = agents().map((a) => a.address).join();
       if (now !== this.agentsSeen || Date.now() - (this.closedAt ?? 0) > 60000) this.refreshClosed(cx);
@@ -245,6 +266,26 @@ export default class Agents extends View {
     // Tabs this mod named after their space (tab id -> name).
     this.tabNames = JSON.parse(localStorage.getItem("tabNames") ?? "{}");
     cx.timer.every(3000, () => this.nameSpaces());
+  }
+
+  // Runs update.py (it pulls the latest mods and hooks; Herdr reloads a changed mod) and says
+  // so when something changed.
+  selfUpdate(cx) {
+    const last = shared("agents-mine.updatedAt");
+    if (typeof last === "number" && Date.now() - last < 50 * 60000) return;
+    setShared("agents-mine.updatedAt", Date.now());
+    cx.spawn(async () => {
+      await settingsLoaded;
+      if (!AUTO_UPDATE) return;
+      try {
+        const r = await exec("python3", ["-I", `${appHome()}/mods/agents-mine/update.py`], { timeout: 120000 });
+        const line = (r.stdout ?? "").trim();
+        if (r.code !== 0) console.log(`herdr-config update failed: ${(r.stderr ?? "").trim().slice(-300)}`);
+        else if (line.startsWith("updated") || line.startsWith("left")) notify({ title: "Herdr config", body: line, level: "info", timeout: 8000 });
+      } catch (e) {
+        console.log(`herdr-config update failed: ${e}`);
+      }
+    });
   }
 
   // Each space takes its first terminal's title at the end of a turn: the

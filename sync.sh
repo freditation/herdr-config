@@ -27,11 +27,11 @@ for f in herdr-asking.py herdr-space-name.py herdr-doing.py; do copy "$H/hooks/$
 copy "/Library/Application Support/ClaudeCode/managed-settings.json" claude/managed-settings.json
 copy "$C/statusline.sh" claude/statusline.sh
 
-# Neutral defaults: the default space is your home folder; no cloud machine (hides the cloud
-# space); a generic launchd label.
-sed -i '' -E 's/^const DEFAULT_DIR = ".*";/const DEFAULT_DIR = "";/' mods/agents-mine/main.js
-sed -i '' -E 's/^const CLOUD_MACHINE = ".*";/const CLOUD_MACHINE = "";/' mods/agents-mine/main.js
-sed -i '' -E 's/^const CLOUD_AGENT_FOLDER = ".*";/const CLOUD_AGENT_FOLDER = "";/' mods/agents-mine/main.js
+# Neutral defaults (settings normally come from herdr-config.json): the default space is your
+# home folder; no cloud machine (hides the cloud space); a generic launchd label.
+sed -i '' -E 's/^let DEFAULT_DIR = .*;$/let DEFAULT_DIR = "";/' mods/agents-mine/main.js
+sed -i '' -E 's/^let CLOUD_MACHINE = .*;$/let CLOUD_MACHINE = "";/' mods/agents-mine/main.js
+sed -i '' -E 's/^let CLOUD_AGENT_FOLDER = .*;$/let CLOUD_AGENT_FOLDER = "";/' mods/agents-mine/main.js
 sed -i '' -E 's/com\.[A-Za-z0-9_-]+\.herdr-routines/dev.herdr-config.routines/g' mods/agents-mine/refresh-routines.py
 
 if [ -f .denylist ]; then
