@@ -128,15 +128,23 @@ function toggleSidebar() {
 
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
 
-function lead(tab, all = panes()) {
-  const mine = all.filter(p => p.tab === tab.id && p.terminal);
-  return mine.find(p => p.program?.agent) ?? mine.find(p => p.focused) ?? mine[0];
+function leadPanes(all) {
+  const leads = new Map();
+  for (const p of all) {
+    if (!p.terminal) continue;
+    const current = leads.get(p.tab);
+    // First agent, else first focused terminal, else first terminal in the tab.
+    if (!current || (!current.program?.agent && (p.program?.agent || (!current.focused && p.focused)))) leads.set(p.tab, p);
+  }
+  return leads;
 }
 
 function title(tab, l) {
   const prog = l?.program?.name;
   const live = clean(l?.title);
-  const telling = live && live !== prog && !/^[~/]|^[A-Za-z]:\\/.test(live) && !live.includes("@") && live.toLowerCase() !== l?.program?.key;
+  // clean() would strip a path's leading ~ or /: test the title with only its status glyph gone.
+  const path = /^[~/]|^[A-Za-z]:\\/.test((l?.title ?? "").replace(/^[^\p{L}\p{N}~/]+/u, ""));
+  const telling = live && live !== prog && !path && !live.includes("@") && live.toLowerCase() !== l?.program?.key;
   return (tab.name === prog || !tab.named) && telling ? live : tab.name;
 }
 // asking: ended its turn on a question (the herdr-asking Claude hook sets the
@@ -324,9 +332,10 @@ export default class Agents extends View {
   nameTabs(live, all) {
     const ours = this.tabNames;
     let changed = false;
+    const leads = leadPanes(all);
     for (const s of live) {
       for (const tab of s.tabs) {
-        const l = lead(tab, all);
+        const l = leads.get(tab.id);
         if (!l?.program?.agent) continue;
         if (tab.named && tab.name !== ours[tab.id]) continue;
         // What the row shows: the agent's own title, else its space.
@@ -613,8 +622,8 @@ export default class Agents extends View {
     return this.changed[a.address]?.at ?? 0;
   }
 
-  // Looking at a done agent makes it idle; it stays with Done until you leave
-  // it rather than drop away under you. Any other change moves it at once.
+  // Which agent you're looking at, and whether it was done when you arrived: a done agent
+  // turns idle as you look at it, and stays bold until you leave it (unread()).
   hold(list) {
     const before = this.lastStatus ?? new Map();
     this.lastStatus = new Map(list.map((a) => [a.address, a.status]));
@@ -633,8 +642,7 @@ export default class Agents extends View {
     // Ended its turn on a question: Needs you, even while its background subagents keep
     // Claude reporting "working". The question is what waits on you; they don't change that.
     if (this.asking?.has(a.address) && a.status !== "blocked") return RANK.asking;
-    const sawDone = a.address === this.held?.address && this.held.rank === RANK.done && a.status === "idle";
-    return sawDone ? RANK.done : RANK[a.status] ?? 0;
+    return RANK[a.status] ?? 0;
   }
 
   // Closes an agent (stopping it if it runs) and puts it at the top of Archived.
@@ -856,7 +864,7 @@ export default class Agents extends View {
       .text_size(12.5)
       .when(on, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover))
-      .on_click(() => this.peek(k.address))
+      .on_click(() => (this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)))
       .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
         .when(Boolean(l), el => el.border_l(1.5).border_color(t.input))
         .when(l === "└" || l === "├", el => el.border_b(1.5).rounded_bl(6))))
@@ -912,6 +920,12 @@ export default class Agents extends View {
     if (this.card && (!this.hovered || this.cardFor !== this.hovered)) this.hideCard();
     this.track(list, now);
     this.hold(list);
+    // A kept sub-agent (one with a pane) is in agents() too: where a tree shows
+    // it, it gets no row of its own, unless it's pinned.
+    const nested = new Set(collapsed ? [] : list.flatMap((a) => this.tree(all, a.address).map((s) => s.t.address)));
+    list = list.filter((a) => a.pinned || !nested.has(a.address));
+    const tabCounts = new Map();
+    for (const a of list) tabCounts.set(a.tab, (tabCounts.get(a.tab) ?? 0) + 1);
     const byPriority = sort.id === "priority";
     const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...this.tree(all, a.address).map((s) => RANK[kidStatus(s.t, this.listed)] ?? 0))]));
     const rankOf = (a) => urgency.get(a.address);
@@ -971,14 +985,18 @@ export default class Agents extends View {
     // A row reads "space \u00b7 detail": the detail is a tab someone named or the
     // agent's own title, never an automatic tab number unless two rows would
     // otherwise read the same.
-    const tabs = spaces().flatMap(s => s.tabs);
-    const label = (a) => {
-      const tab = tabs.find(tab => tab.id === a.tab);
-      if (!tab) return a.title || a.program?.name || "";
+    // Read the pane snapshot once: every host read copies the whole list into JS.
+    const leads = leadPanes(panes());
+    const tabs = new Map(spaces().flatMap(s => s.tabs).map(tab => [tab.id, tab]));
+    const labels = new Map(list.map(a => {
+      const tab = tabs.get(a.tab);
+      if (!tab) return [a.address, a.title || a.program?.name || ""];
       // A tab named here after its space reads as unnamed, so rows don't repeat the space.
       const own = this.tabNames[tab.id] === tab.name ? { ...tab, name: String(tab.index), named: false } : tab;
-      return title(own, lead(tab));
-    };
+      const many = tabCounts.get(a.tab) > 1;
+      return [a.address, title(many ? { ...own, named: false } : own, many ? a : leads.get(a.tab))];
+    }));
+    const label = (a) => labels.get(a.address);
     const detail = new Map(list.map(a => [a.address, /^\d+$/.test(label(a)) ? null : label(a)]));
     const seen = {};
     for (const a of list) { const k = `${a.space_name}\u0000${detail.get(a.address) ?? ""}`; seen[k] = (seen[k] ?? 0) + 1; }

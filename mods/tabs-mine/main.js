@@ -1,5 +1,5 @@
 import { View, div, svg, image } from "gpui-kit";
-import { h_flex } from "gpui-base";
+import { h_flex, ScrollHandle } from "gpui-base";
 import { spaces, panes, agents, run, openOverlay, theme, window, shared, setShared, layout, settings, nextCommand } from "herdr";
 
 // Closing an agent's tab only puts it away: the agents sidebar settles it (still running,
@@ -23,6 +23,7 @@ function find(node, id) {
 export default class Tabs extends View {
   init(_props, cx) {
     this.pressed = null;
+    this.scroll = ScrollHandle.new();
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
     // cmd-w (keys.json: "tabs-mine.close"): close the shown tab as the X does (an agent's is
     // put away; another closes, and its space if it's the last one, without asking).
@@ -67,6 +68,13 @@ export default class Tabs extends View {
     const space = spaces().find(p => p.active);
     // Put-away (settled) tabs leave the bar, unless one is still the shown tab.
     const shown = (space?.tabs ?? []).filter(c => !c.settled || c.active);
+    const active = shown.findIndex(tab => tab.active);
+    const selected = shown[active]?.id;
+    if (selected !== this.selected || active !== this.selectedIndex) {
+      this.selected = selected;
+      this.selectedIndex = active;
+      if (active >= 0) this.scroll.scroll_to_item(active);
+    }
     const stop = (_e, cx) => cx.stop_propagation();
     // A local space inside one of the agents sidebar's added spaces (shared "agents-mine.dirs")
     // gets that space's Claude color, the deepest match winning, as in the sidebar.
@@ -88,6 +96,8 @@ export default class Tabs extends View {
       const remote = agents().find(a => a.tab === c.id && a.address.includes("/"))?.address.split("/")[0];
       const cloud = remote && program?.icon?.includes("claude") ? cloudOf(remote) : null;
       return h_flex().id(`tab-${c.id}`).h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8)
+        // A rename or status dot on this or an earlier tab can push the active one out.
+        .when(i <= active, el => el.on_size_change((_size, cx) => { this.scroll.scroll_to_item(active); cx.notify(); }))
         .border(1).border_color(c.active ? t.border : t.chrome).bg(c.active ? t.raised : t.chrome).text_color(c.active ? t.foreground : t.muted)
         .hover(s => s.bg(t.hover))
         .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); this.pressed = i; if (e.click_count === 2) run("tab.rename", { id: c.id }); })
@@ -127,7 +137,9 @@ export default class Tabs extends View {
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
       .on_mouse_up("left", () => { this.pressed = null; })
       .on_scroll_wheel(e => { if (Math.abs(e.delta.y) >= 1) run(e.delta.y > 0 ? "tab.prev" : "tab.next"); })
-      .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().children(shown.map(item)))
+      .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().track_scroll(this.scroll)
+        .on_size_change((_size, cx) => { if (active >= 0) { this.scroll.scroll_to_item(active); cx.notify(); } })
+        .children(shown.map(item)))
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
